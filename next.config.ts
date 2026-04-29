@@ -1,13 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  api: {
-    proxy: {
-      "/api/execute": {
-        target: "http://localhost:8000",
-        changeOrigin: true,
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://localhost:8001/api/:path*",
       },
-    },
+    ];
   },
 };
 
