@@ -3,8 +3,8 @@
   "language": "javascript/typescript",
   "framework": "next.js",
   "started": "2026-04-29T23:26:40.042828",
-  "cycles_completed": 11,
-  "last_cycle": "2026-04-30T00:33:34.370887",
+  "cycles_completed": 14,
+  "last_cycle": "2026-04-30T00:39:08.648915",
   "questions_log": {
     "last_run": "2026-04-29T23:32:42.579153",
     "answers": {
@@ -57,14 +57,14 @@
     "lint_errors": 0,
     "known_bugs": 0,
     "last_5_cycles": [
+      "pass",
+      "pass",
       "improve",
-      "pass",
-      "pass",
       "pass",
       "pass"
     ],
     "security_issues": 0,
-    "live_tests_passed": 1,
+    "live_tests_passed": 0,
     "live_tests_total": 4
   },
   "history": [
@@ -171,6 +171,36 @@
       "issues_blocked": 0,
       "commit": "9fe992ac",
       "timestamp": "2026-04-30T00:33:34.370836"
+    },
+    {
+      "cycle": 12,
+      "action": "improve",
+      "live_passed": 0,
+      "live_total": 4,
+      "issues_fixed": 0,
+      "issues_blocked": 0,
+      "commit": "fb2286b3",
+      "timestamp": "2026-04-30T00:36:06.182142"
+    },
+    {
+      "cycle": 13,
+      "action": "pass",
+      "live_passed": 0,
+      "live_total": 4,
+      "issues_fixed": 0,
+      "issues_blocked": 0,
+      "commit": "fb2286b3",
+      "timestamp": "2026-04-30T00:37:53.493488"
+    },
+    {
+      "cycle": 14,
+      "action": "pass",
+      "live_passed": 0,
+      "live_total": 4,
+      "issues_fixed": 0,
+      "issues_blocked": 0,
+      "commit": "fb2286b3",
+      "timestamp": "2026-04-30T00:39:08.648864"
     }
   ],
   "fixed_issues": [
@@ -319,24 +349,62 @@
     {
       "type": "api_returns_error",
       "desc": "\u274c Health failed: "
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "curl failed: "
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "\u274c Health failed: "
+    },
+    {
+      "type": "frontend_not_serving",
+      "desc": "Frontend not serving (exit 7)"
+    },
+    {
+      "type": "proxy_broken",
+      "desc": "Frontend proxy failed (exit 7)"
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "curl failed: "
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "\u274c Health failed: "
+    },
+    {
+      "type": "frontend_not_serving",
+      "desc": "Frontend not serving (exit 7)"
+    },
+    {
+      "type": "proxy_broken",
+      "desc": "Frontend proxy failed (exit 7)"
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "curl failed: "
+    },
+    {
+      "type": "api_returns_error",
+      "desc": "\u274c Health failed: "
+    },
+    {
+      "type": "frontend_not_serving",
+      "desc": "Frontend not serving (exit 7)"
+    },
+    {
+      "type": "proxy_broken",
+      "desc": "Frontend proxy failed (exit 7)"
     }
   ],
   "needs_human": [],
   "improvements_done": [],
   "improvements_backlog": [],
-  "last_good_commit": "9fe992ac",
+  "last_good_commit": "fb2286b3",
   "death_spiral": false,
   "live_test_results": [
-    [
-      "frontend_serves",
-      true,
-      "\u2705 Frontend serves HTML"
-    ],
-    [
-      "frontend_proxy",
-      false,
-      "Proxy returned: Internal Server Error"
-    ],
     [
       "api_execute",
       false,
@@ -346,6 +414,16 @@
       "health_endpoint",
       false,
       "\u274c Health failed: "
+    ],
+    [
+      "frontend_serves",
+      false,
+      "Frontend not serving (exit 7)"
+    ],
+    [
+      "frontend_proxy",
+      false,
+      "Frontend proxy failed (exit 7)"
     ]
   ]
 }
