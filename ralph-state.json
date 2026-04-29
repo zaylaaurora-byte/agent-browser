@@ -1,0 +1,40 @@
+{
+  "project": "",
+  "language": "",
+  "framework": "",
+  "started": "2026-04-29T23:26:40.042828",
+  "cycles_completed": 1,
+  "last_cycle": "2026-04-29T23:26:40.049424",
+  "questions_log": {
+    "last_answers": {},
+    "blockers": []
+  },
+  "metrics": {
+    "tests_passing": 0,
+    "tests_total": 0,
+    "lint_errors": 0,
+    "known_bugs": 0,
+    "last_5_cycles": [
+      "pass"
+    ]
+  },
+  "history": [
+    {
+      "cycle": 1,
+      "action": "pass",
+      "target": "assessment",
+      "description": "No action taken",
+      "result": "pass",
+      "commit": "f6d402c8",
+      "timestamp": "2026-04-29T23:26:40.049387"
+    }
+  ],
+  "fixed_issues": [],
+  "current_issues": [],
+  "blocked_issues": [],
+  "needs_human": [],
+  "improvements_done": [],
+  "improvements_backlog": [],
+  "last_good_commit": "f6d402c8",
+  "death_spiral": false
+}
