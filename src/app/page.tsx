@@ -3,11 +3,11 @@
 import { HeroSection } from "@/components/hero-section";
 import { AgentBrowser } from "@/components/agent-browser";
 
-export default function DashboardPage() {
+export default function Home() {
   return (
-    <div className="min-h-screen bg-[#050508] text-zinc-100 overflow-x-hidden">
+    <main className="pt-14">
       <HeroSection />
       <AgentBrowser />
-    </div>
+    </main>
   );
 }

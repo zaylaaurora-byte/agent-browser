@@ -5,7 +5,7 @@ import { Navbar } from "@/components/navbar";
 
 const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-sans",
 });
 
 export const metadata: Metadata = {
@@ -22,7 +22,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <body className={`${inter.variable} font-sans antialiased bg-[#050508] text-zinc-100`}>
         <Navbar />
-        <main>{children}</main>
+        {children}
       </body>
     </html>
   );

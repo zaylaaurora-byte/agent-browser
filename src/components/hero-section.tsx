@@ -2,32 +2,6 @@
 
 import { useRef } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { Zap, CheckCircle2, Clock } from "lucide-react";
-
-function FloatingOrb({
-  className,
-  delay = 0,
-}: {
-  className: string;
-  delay?: number;
-}) {
-  return (
-    <motion.div
-      className={`absolute rounded-full blur-[120px] pointer-events-none ${className}`}
-      animate={{
-        y: [0, -20, 10, 0],
-        x: [0, 15, -10, 0],
-        scale: [1, 1.1, 0.95, 1],
-      }}
-      transition={{
-        duration: 8,
-        repeat: Infinity,
-        delay,
-        ease: "easeInOut",
-      }}
-    />
-  );
-}
 
 export function HeroSection() {
   const ref = useRef<HTMLDivElement>(null);
@@ -36,105 +10,100 @@ export function HeroSection() {
     offset: ["start start", "end start"],
   });
 
-  const y = useTransform(scrollYProgress, [0, 1], [0, 150]);
+  const y = useTransform(scrollYProgress, [0, 1], ["0%", "40%"]);
   const opacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
   const scale = useTransform(scrollYProgress, [0, 0.8], [1, 0.95]);
 
   return (
-    <section ref={ref} className="relative min-h-[480px] flex flex-col items-center justify-center overflow-hidden pt-14">
-      {/* Animated background orbs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <FloatingOrb
-          className="top-[-15%] left-[8%] w-[500px] h-[500px] bg-violet-600/10"
-          delay={0}
+    <div ref={ref} className="relative h-[50vh] min-h-[400px] overflow-hidden flex items-center justify-center">
+      {/* Parallax background orbs */}
+      <motion.div style={{ y }} className="absolute inset-0 pointer-events-none">
+        <div
+          className="absolute top-[10%] left-[15%] w-[500px] h-[500px] rounded-full bg-violet-600/15 blur-[120px]"
+          style={{ animation: "float 8s ease-in-out infinite" }}
         />
-        <FloatingOrb
-          className="bottom-[-10%] right-[5%] w-[400px] h-[400px] bg-cyan-500/8"
-          delay={2}
+        <div
+          className="absolute bottom-[5%] right-[10%] w-[400px] h-[400px] rounded-full bg-cyan-500/10 blur-[100px]"
+          style={{ animation: "float-delayed 10s ease-in-out infinite" }}
         />
-        <FloatingOrb
-          className="top-[30%] right-[25%] w-[300px] h-[300px] bg-fuchsia-600/6"
-          delay={4}
+        <div
+          className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-fuchsia-600/8 blur-[150px]"
         />
-        <FloatingOrb
-          className="bottom-[20%] left-[30%] w-[250px] h-[250px] bg-emerald-500/5"
-          delay={1}
-        />
-      </div>
+      </motion.div>
 
-      {/* Noise overlay */}
+      {/* Noise texture */}
       <div
-        className="absolute inset-0 opacity-[0.025] pointer-events-none"
+        className="absolute inset-0 opacity-[0.03] pointer-events-none"
         style={{
           backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
         }}
       />
 
-      <motion.div
-        style={{ y, opacity, scale }}
-        className="relative z-10 text-center max-w-4xl mx-auto px-6"
-      >
-        {/* Badge */}
+      {/* Grid overlay */}
+      <div
+        className="absolute inset-0 opacity-[0.02] pointer-events-none"
+        style={{
+          backgroundImage: `linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)`,
+          backgroundSize: "60px 60px",
+        }}
+      />
+
+      {/* Content */}
+      <motion.div style={{ opacity, scale }} className="relative z-10 text-center px-6">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.06] mb-8"
+          transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
         >
-          <div className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-          <span className="text-[10px] text-zinc-400 uppercase tracking-[0.2em] font-semibold">
-            AI-Powered Automation
-          </span>
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-900/60 border border-zinc-800/60 mb-8 backdrop-blur-xl">
+            <div className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+            <span className="text-[11px] text-zinc-400 font-semibold tracking-wider uppercase">AI-Powered Browser Automation</span>
+          </div>
         </motion.div>
 
-        {/* Title */}
         <motion.h1
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-          className="text-6xl md:text-7xl lg:text-8xl font-black tracking-tight mb-4"
+          transition={{ duration: 0.8, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+          className="text-6xl md:text-8xl font-black tracking-tight mb-6"
         >
-          <span className="text-gradient">Agent Browser</span>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-zinc-200 to-zinc-400">Agent</span>
+          <br />
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-fuchsia-400 to-cyan-400">Browser</span>
         </motion.h1>
 
-        {/* Subtitle */}
         <motion.p
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto"
+          transition={{ duration: 0.8, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          className="text-zinc-500 text-lg max-w-xl mx-auto mb-10"
         >
-          Watch AI browse the web in real-time. Execute tasks, observe reasoning, and
-          automate any browser workflow.
+          Watch AI agents navigate the web in real-time. Fill forms, extract data, automate workflows — all with live reasoning.
         </motion.p>
 
-        {/* Stats bar */}
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className="flex items-center justify-center gap-8 md:gap-12"
+          transition={{ duration: 0.8, delay: 0.3, ease: [0.16, 1, 0.3, 1] }}
+          className="flex items-center justify-center gap-6"
         >
-          {[
-            { icon: Zap, label: "Tasks Completed", value: "∞", color: "text-violet-400" },
-            { icon: CheckCircle2, label: "Success Rate", value: "99%", color: "text-emerald-400" },
-            { icon: Clock, label: "Avg. Time", value: "~12s", color: "text-cyan-400" },
-          ].map(({ icon: Icon, label, value, color }) => (
-            <div key={label} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center">
-                <Icon className={`w-5 h-5 ${color}`} />
-              </div>
-              <div className="text-left">
-                <div className="text-lg font-bold text-white">{value}</div>
-                <div className="text-[9px] text-zinc-600 uppercase tracking-wider">{label}</div>
-              </div>
-            </div>
-          ))}
+          <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+            <span>3 Agent Modes</span>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+            <span>Live Streaming</span>
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span>Stealth Ready</span>
+          </div>
         </motion.div>
       </motion.div>
 
-      {/* Bottom fade */}
+      {/* Bottom gradient fade */}
       <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#050508] to-transparent pointer-events-none" />
-    </section>
+    </div>
   );
 }
