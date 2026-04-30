@@ -83,27 +83,37 @@ STEALTH_JS = """
 SYSTEM_PROMPT = """You are a browser automation agent. You control a web browser to complete tasks.
 
 RULES:
+- You are ALREADY on the page listed in the page info below — do NOT navigate away
+- If the task URL matches the current page URL, work on THIS page immediately
+- Only use navigate() if the task explicitly asks you to go to a different URL
 - Respond with EXACTLY ONE action per message
 - Use the ACTION format exactly as shown
-- Be precise with CSS selectors
-- If unsure, take a screenshot first to see the page
+- Be precise with CSS selectors (use [name="fieldname"] for form fields)
+- For radio buttons: use check([name="size"][value="large"])
+- For checkboxes: use check([name="topping"][value="bacon"])
+- NEVER include quotes around text values in type actions
+- Always use RAW text without quotes
 
 Available actions:
-- ACTION: navigate(url)
-- ACTION: click(selector)  
-- ACTION: type(selector, text)
+- ACTION: navigate(url) — ONLY if you need to go somewhere else
+- ACTION: click(selector)
+- ACTION: type(selector, text) — type RAW text only, no quotes
+- ACTION: check(selector) — check a checkbox or radio button
+- ACTION: submit(selector) — click a form submit button
 - ACTION: scroll(direction) — "up" or "down"
 - ACTION: wait(seconds)
 - ACTION: screenshot()
 - ACTION: done(answer) — complete the task with your answer
 
-Examples:
-ACTION: navigate(https://google.com)
-ACTION: click(#search-button)
-ACTION: type(input[name="q"], "hello world")
-ACTION: scroll(down)
-ACTION: wait(2)
-ACTION: done(The page title is "Example Domain")
+Examples (work on the CURRENT page, do not navigate):
+Current page: pizza order form at https://httpbin.org/forms/post
+Task: Fill in name, email, select large, check bacon, submit
+ACTION: type(input[name="custname"], John Connor)
+ACTION: type(input[name="custemail"], john@example.com)
+ACTION: check(input[name="size"][value="large"])
+ACTION: check(input[name="topping"][value="bacon"])
+ACTION: click(button[type="submit"])
+ACTION: done(Order submitted successfully)
 """
 
 
@@ -114,6 +124,48 @@ class BrowserAgent:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.history: list = []
+        self.conversation_history: list = []  # Track AI conversation for context
+
+    def _build_ai_messages(self, task: str, page_content: str) -> list:
+        """Build messages for AI including conversation history"""
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Add conversation history for context
+        messages.extend(self.conversation_history)
+        
+        # Parse page data and format for AI
+        try:
+            data = json.loads(page_content) if page_content.startswith("{") else {}
+        except:
+            data = {}
+        
+        # Build a clear form representation
+        form_lines = []
+        form_map = data.get("form", {})
+        if form_map:
+            form_lines.append("FORM FIELDS:")
+            for label, info in form_map.items():
+                form_lines.append(f"  {label}: {info['selector']} (type={info['type']})")
+        
+        interactives = data.get("interactives", [])
+        int_lines = []
+        if interactives:
+            int_lines.append("INTERACTIVE:")
+            for el in interactives:
+                if el["tag"] in ("button", "a") or el["type"] in ("submit","button"):
+                    int_lines.append(f"  {el['text'] or el['selector']}: {el['selector']}")
+                elif el["tag"] == "input":
+                    int_lines.append(f"  [{el['type']}] {el['selector']}: {el['placeholder'] or el.get('text','')}")
+        
+        content_parts = [f"Task: {task}"]
+        if form_lines:
+            content_parts.append("\n".join(form_lines))
+        if int_lines:
+            content_parts.append("\n".join(int_lines))
+        content_parts.append(f"\nPage: {data.get('title','unknown')} — {data.get('url','')}")
+        
+        content = "\n".join(content_parts)
+        messages.append({"role": "user", "content": content[:1200]})
+        return messages
 
     async def _init_browser(self):
         """Initialize stealth browser"""
@@ -184,6 +236,30 @@ class BrowserAgent:
                     if (t) texts.push(t);
                 }
                 
+                // Build selector map: label text → selector
+                const formMap = {};
+                document.querySelectorAll('input, select, textarea').forEach(el => {
+                    const name = el.getAttribute('name') || el.id || '';
+                    const type = el.getAttribute('type') || '';
+                    const value = el.getAttribute('value') || '';
+                    // Find label
+                    let label = '';
+                    const forAttr = el.getAttribute('id');
+                    if (forAttr) {
+                        const lbl = document.querySelector('label[for="' + forAttr + '"]');
+                        if (lbl) label = lbl.textContent.trim();
+                    }
+                    if (!label && name) {
+                        const lbl = document.querySelector('label[for="' + name + '"]');
+                        if (lbl) label = lbl.textContent.trim();
+                    }
+                    // For radio/checkbox: use value attribute as label hint
+                    const hint = type === 'radio' || type === 'checkbox' ? `[value="${value}"]` : '';
+                    const selector = name ? `${el.tagName.toLowerCase()}[name="${name}"]` : (el.id ? '#' + el.id : el.tagName.toLowerCase());
+                    const key = label || (type === 'radio' || type === 'checkbox' ? value : name || selector);
+                    formMap[key] = {selector: selector + hint, type, value};
+                });
+                
                 // Get interactive elements
                 const interactives = [];
                 document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]').forEach(el => {
@@ -216,6 +292,7 @@ class BrowserAgent:
                     url: window.location.href,
                     title: document.title,
                     text: texts.slice(0, 100).join(' ').slice(0, 2000),
+                    form: formMap,
                     interactives: interactives.slice(0, 30)
                 });
             }""")
@@ -229,8 +306,8 @@ class BrowserAgent:
             from openai import OpenAI
 
             api_key = os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
-            base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.chat/v1")
-            model = os.getenv("AI_MODEL", "MiniMax-M2.5")
+            base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+            model = os.getenv("AI_MODEL", "MiniMax-M2.7")
 
             if not api_key:
                 # Fallback: simple heuristic-based action
@@ -238,16 +315,21 @@ class BrowserAgent:
 
             client = OpenAI(api_key=api_key, base_url=base_url)
 
+            messages = self._build_ai_messages(task, page_content)
             response = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Task: {task}\n\nCurrent page state:\n{page_content}"}
-                ],
-                max_tokens=300,
+                messages=messages,
+                max_tokens=600,
                 temperature=0.3,
             )
-            return response.choices[0].message.content.strip()
+            ai_response = response.choices[0].message.content.strip()
+            # Add to conversation history
+            self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
+            self.conversation_history.append({"role": "assistant", "content": ai_response})
+            # Keep history short (last 6 messages = 3 turns)
+            if len(self.conversation_history) > 6:
+                self.conversation_history = self.conversation_history[-6:]
+            return ai_response
         except Exception as e:
             logger.warning(f"AI call failed: {e}")
             return self._fallback_ai(task, page_content)
@@ -318,14 +400,34 @@ class BrowserAgent:
                 parts = arg.split(",", 1)
                 if len(parts) == 2:
                     selector, text = parts[0].strip(), parts[1].strip()
-                    await self.page.click(selector)
-                    await self._human_delay(0.1, 0.3)
-                    # Type with random delays between keystrokes
-                    for char in text:
-                        await self.page.keyboard.type(char, delay=random.randint(30, 120))
+                    # Strip outer quotes if AI included them
+                    if (text.startswith('"') and text.endswith('"')) or \
+                       (text.startswith("'") and text.endswith("'")):
+                        text = text[1:-1]
+                    # Use fill() which auto-clears the field first
+                    await self.page.fill(selector, text)
+                    await self._human_delay(0.2, 0.6)
                     result["success"] = True
                 else:
                     result["error"] = "Invalid type format: use selector, text"
+
+            elif action == "check":
+                # Check a checkbox or radio button
+                await self.page.check(arg)
+                await self._human_delay(0.1, 0.3)
+                result["success"] = True
+
+            elif action == "select":
+                # Use click for radio buttons (select_option is for dropdowns only)
+                await self.page.click(arg)
+                await self._human_delay(0.1, 0.3)
+                result["success"] = True
+
+            elif action == "submit":
+                # Submit a form
+                await self.page.click(arg)
+                await self._human_delay(0.5, 1.5)
+                result["success"] = True
 
             elif action == "scroll":
                 amount = random.randint(300, 700)
@@ -366,7 +468,7 @@ class BrowserAgent:
         steps_executed = 0
         steps_failed = 0
         answer = None
-        max_steps = 15 if mode == "fast" else 25
+        max_steps = 15 if mode == "fast" else 500
 
         # Navigate to start URL
         try:
@@ -433,7 +535,7 @@ class BrowserAgent:
         await self._init_browser()
 
         steps_executed = 0
-        max_steps = 15 if mode == "fast" else 25
+        max_steps = 15 if mode == "fast" else 500
 
         # Navigate to start
         try:

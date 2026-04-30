@@ -2,6 +2,9 @@ import logging
 logger = logging.getLogger(__name__)
 """Agent Browser - FastAPI Backend"""
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file
+
 import json
 import asyncio
 import base64
