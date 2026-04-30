@@ -524,7 +524,19 @@ class BrowserAgent:
                 result["success"] = True
 
             elif action == "submit":
-                await self.page.click(arg)
+                # Use wait_for_load_state=commit so we don't hang waiting for a POST response
+                # that doesn't navigate anywhere (e.g. httpbin.org/post)
+                try:
+                    await asyncio.wait_for(
+                        self.page.click(arg, wait_for_load_state="commit"),
+                        timeout=15.0
+                    )
+                except asyncio.TimeoutError:
+                    # Fallback: just click without waiting
+                    try:
+                        await self.page.click(arg, no_wait_after=True)
+                    except Exception:
+                        pass
                 await self._human_delay(0.5, 1.5)
                 result["success"] = True
 
@@ -556,8 +568,16 @@ class BrowserAgent:
     async def _take_screenshot(self) -> str:
         """Take screenshot and return base64"""
         if self.page:
-            ss = await self.page.screenshot(type="png", full_page=False)
-            return base64.b64encode(ss).decode()
+            try:
+                ss = await asyncio.wait_for(
+                    self.page.screenshot(type="png", full_page=False),
+                    timeout=10.0
+                )
+                return base64.b64encode(ss).decode()
+            except asyncio.TimeoutError:
+                return ""
+            except Exception:
+                return ""
         return ""
 
     async def stream_execute(self, task: str, url: str, mode: str) -> AsyncGenerator[dict, None]:
@@ -640,9 +660,15 @@ class BrowserAgent:
                 ),
             }
 
-            # Execute
+            # Execute — with overall step timeout (30s max per step)
             exec_start = time.monotonic()
-            result = await self._execute_action(action, arg)
+            try:
+                result = await asyncio.wait_for(
+                    self._execute_action(action, arg),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                result = {"success": False, "error": f"Step timed out after 30s (action: {action})"}
             exec_ms = int((time.monotonic() - exec_start) * 1000)
 
             if result["success"]:
