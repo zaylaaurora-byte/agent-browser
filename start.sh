@@ -26,13 +26,13 @@ cd ..
 sleep 3
 
 # Start frontend
-echo "⚡ Starting frontend (Next.js on :3000)..."
-npm run dev &
+echo "⚡ Starting frontend (Next.js on :3002)..."
+npm run dev -- --port 3002 &
 FRONTEND_PID=$!
 
 echo ""
 echo "✅ Agent Browser is running!"
-echo "   Frontend: http://localhost:3000"
+echo "   Frontend: http://localhost:3002"
 echo "   Backend:  http://localhost:8001"
 echo "   API Docs: http://localhost:8001/docs"
 echo ""

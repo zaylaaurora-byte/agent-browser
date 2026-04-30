@@ -4,6 +4,7 @@ import os
 import json
 import base64
 import random
+import time
 import logging
 from typing import AsyncGenerator, Optional
 from datetime import datetime
@@ -39,7 +40,7 @@ USER_AGENTS = [
 STEALTH_JS = """
     // Remove webdriver flag
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    
+
     // Fake plugins
     Object.defineProperty(navigator, 'plugins', {
         get: () => {
@@ -52,20 +53,20 @@ STEALTH_JS = """
             return plugins;
         }
     });
-    
+
     // Fake languages
     Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-    
+
     // Fake Chrome runtime
     window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
-    
+
     // Fake permissions
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) =>
         parameters.name === 'notifications'
             ? Promise.resolve({ state: Notification.permission })
             : originalQuery(parameters);
-    
+
     // Fake WebGL vendor
     const getParameter = WebGLRenderingContext.prototype.getParameter;
     WebGLRenderingContext.prototype.getParameter = function(parameter) {
@@ -73,7 +74,7 @@ STEALTH_JS = """
         if (parameter === 37446) return 'Intel Iris OpenGL Engine';
         return getParameter.call(this, parameter);
     };
-    
+
     // Remove automation indicators
     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
     delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
@@ -124,45 +125,42 @@ class BrowserAgent:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.history: list = []
-        self.conversation_history: list = []  # Track AI conversation for context
+        self.conversation_history: list = []
 
     def _build_ai_messages(self, task: str, page_content: str) -> list:
         """Build messages for AI including conversation history"""
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        # Add conversation history for context
         messages.extend(self.conversation_history)
-        
-        # Parse page data and format for AI
+
         try:
             data = json.loads(page_content) if page_content.startswith("{") else {}
         except:
             data = {}
-        
-        # Build a clear form representation
+
         form_lines = []
         form_map = data.get("form", {})
         if form_map:
             form_lines.append("FORM FIELDS:")
             for label, info in form_map.items():
                 form_lines.append(f"  {label}: {info['selector']} (type={info['type']})")
-        
+
         interactives = data.get("interactives", [])
         int_lines = []
         if interactives:
             int_lines.append("INTERACTIVE:")
             for el in interactives:
-                if el["tag"] in ("button", "a") or el["type"] in ("submit","button"):
+                if el["tag"] in ("button", "a") or el["type"] in ("submit", "button"):
                     int_lines.append(f"  {el['text'] or el['selector']}: {el['selector']}")
                 elif el["tag"] == "input":
                     int_lines.append(f"  [{el['type']}] {el['selector']}: {el['placeholder'] or el.get('text','')}")
-        
+
         content_parts = [f"Task: {task}"]
         if form_lines:
             content_parts.append("\n".join(form_lines))
         if int_lines:
             content_parts.append("\n".join(int_lines))
         content_parts.append(f"\nPage: {data.get('title','unknown')} — {data.get('url','')}")
-        
+
         content = "\n".join(content_parts)
         messages.append({"role": "user", "content": content[:1200]})
         return messages
@@ -202,20 +200,14 @@ class BrowserAgent:
                 color_scheme="dark",
             )
             self.page = await self.context.new_page()
-
-            # Inject stealth scripts before every page load
             await self.page.add_init_script(STEALTH_JS)
-
-            # Default timeout
             self.page.set_default_timeout(15000)
             self.page.set_default_navigation_timeout(30000)
 
     async def _dismiss_cookie_banner(self):
         """Auto-dismiss common cookie consent banners"""
         try:
-            # Wait briefly for banner to appear
             await asyncio.sleep(0.5)
-            # Common cookie button selectors
             cookie_selectors = [
                 "[aria-label='Accept all cookies']",
                 "[aria-label='Accept cookies']",
@@ -295,29 +287,26 @@ class BrowserAgent:
             content = await self.page.evaluate("""() => {
                 const body = document.body;
                 if (!body) return 'Empty page';
-                
-                // Get all visible text
+
                 const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
                     acceptNode: (node) => {
                         const style = window.getComputedStyle(node.parentElement);
-                        return style.display !== 'none' && style.visibility !== 'hidden' 
+                        return style.display !== 'none' && style.visibility !== 'hidden'
                             ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                     }
                 });
-                
+
                 const texts = [];
                 while (walker.nextNode()) {
                     const t = walker.currentNode.textContent.trim();
                     if (t) texts.push(t);
                 }
-                
-                // Build selector map: label text → selector
+
                 const formMap = {};
                 document.querySelectorAll('input, select, textarea').forEach(el => {
                     const name = el.getAttribute('name') || el.id || '';
                     const type = el.getAttribute('type') || '';
                     const value = el.getAttribute('value') || '';
-                    // Find label
                     let label = '';
                     const forAttr = el.getAttribute('id');
                     if (forAttr) {
@@ -328,14 +317,12 @@ class BrowserAgent:
                         const lbl = document.querySelector('label[for="' + name + '"]');
                         if (lbl) label = lbl.textContent.trim();
                     }
-                    // For radio/checkbox: use value attribute as label hint
                     const hint = type === 'radio' || type === 'checkbox' ? `[value="${value}"]` : '';
                     const selector = name ? `${el.tagName.toLowerCase()}[name="${name}"]` : (el.id ? '#' + el.id : el.tagName.toLowerCase());
                     const key = label || (type === 'radio' || type === 'checkbox' ? value : name || selector);
                     formMap[key] = {selector: selector + hint, type, value};
                 });
-                
-                // Get interactive elements
+
                 const interactives = [];
                 document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]').forEach(el => {
                     const tag = el.tagName.toLowerCase();
@@ -346,13 +333,13 @@ class BrowserAgent:
                     const id = el.getAttribute('id') || '';
                     const cls = el.getAttribute('class') || '';
                     const placeholder = el.getAttribute('placeholder') || '';
-                    
+
                     let selector = '';
                     if (id) selector = `#${id}`;
                     else if (name) selector = `${tag}[name="${name}"]`;
                     else if (cls) selector = `${tag}.${cls.split(' ')[0]}`;
                     else selector = tag;
-                    
+
                     interactives.push({
                         selector,
                         tag,
@@ -362,7 +349,7 @@ class BrowserAgent:
                         placeholder: placeholder.slice(0, 30)
                     });
                 });
-                
+
                 return JSON.stringify({
                     url: window.location.href,
                     title: document.title,
@@ -375,39 +362,46 @@ class BrowserAgent:
         except Exception as e:
             return json.dumps({"error": str(e), "url": str(self.page.url if self.page else "none")})
 
-    async def _call_ai(self, task: str, page_content: str) -> str:
-        """Call AI model to decide next action"""
+    def _parse_page_data(self, page_content: str) -> dict:
+        """Extract structured observation from page content for frontend"""
+        try:
+            data = json.loads(page_content) if page_content.startswith("{") else {}
+        except:
+            data = {}
+        return data
+
+    async def _call_ai(self, task: str, page_content: str) -> tuple[str, float, str]:
+        """Call AI model to decide next action.
+        Returns (ai_response, duration_ms, model_name)"""
+        start = time.monotonic()
+        model_name = os.getenv("AI_MODEL", "MiniMax-M2.7")
+
         try:
             from openai import OpenAI
 
             api_key = os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY")
             base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
-            model = os.getenv("AI_MODEL", "MiniMax-M2.7")
 
             if not api_key:
-                # Fallback: simple heuristic-based action
-                return self._fallback_ai(task, page_content)
+                return self._fallback_ai(task, page_content), (time.monotonic() - start) * 1000, "fallback"
 
             client = OpenAI(api_key=api_key, base_url=base_url)
-
             messages = self._build_ai_messages(task, page_content)
             response = client.chat.completions.create(
-                model=model,
+                model=model_name,
                 messages=messages,
                 max_tokens=600,
                 temperature=0.3,
             )
             ai_response = response.choices[0].message.content.strip()
-            # Add to conversation history
             self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
             self.conversation_history.append({"role": "assistant", "content": ai_response})
-            # Keep history short (last 6 messages = 3 turns)
             if len(self.conversation_history) > 6:
                 self.conversation_history = self.conversation_history[-6:]
-            return ai_response
+            return ai_response, (time.monotonic() - start) * 1000, model_name
         except Exception as e:
             logger.warning(f"AI call failed: {e}")
-            return self._fallback_ai(task, page_content)
+            return self._fallback_ai(task, page_content), (time.monotonic() - start) * 1000, "fallback"
 
     def _fallback_ai(self, task: str, page_content: str) -> str:
         """Rule-based fallback when AI is unavailable"""
@@ -415,10 +409,9 @@ class BrowserAgent:
             data = json.loads(page_content) if page_content.startswith("{") else {}
             title = data.get("title", "")
             text = data.get("text", "")
-            
+
             task_lower = task.lower()
-            
-            # Simple task matching
+
             if "title" in task_lower or "what" in task_lower:
                 return f'ACTION: done(The page title is "{title}". Text on page: {text[:200]})'
             if "text" in task_lower or "content" in task_lower or "visible" in task_lower:
@@ -431,7 +424,7 @@ class BrowserAgent:
                     target = interactives[0]
                     return f'ACTION: click({target["selector"]})'
                 return f'ACTION: done(No clickable elements found. Page title: {title})'
-            
+
             return f'ACTION: done(Page title: "{title}". Content: {text[:300]})'
         except:
             return f'ACTION: done(Could not parse page. Task was: {task})'
@@ -439,8 +432,7 @@ class BrowserAgent:
     def _parse_action(self, response: str) -> tuple:
         """Parse AI response into (action, argument)"""
         response = response.strip()
-        
-        # Find ACTION: line
+
         for line in response.split("\n"):
             line = line.strip()
             if line.startswith("ACTION:"):
@@ -450,36 +442,30 @@ class BrowserAgent:
                     arg = rest[rest.index("(")+1:-1].strip()
                     return name, arg
                 return "done", rest
-        
-        # No ACTION found — treat as done
+
         return "done", response[:200]
 
     async def _execute_action(self, action: str, arg: str) -> dict:
         """Execute a single browser action"""
-        result = {"action": action, "arg": arg, "success": False, "error": None}
-        
+        result = {"action": action, "arg": arg, "success": False, "error": None, "selector": arg}
+
         try:
             if action == "navigate":
                 url = arg if arg.startswith("http") else f"https://{arg}"
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await self._human_delay(0.5, 1.5)
-                # Auto-dismiss cookie banners
                 await self._dismiss_cookie_banner()
                 result["success"] = True
                 result["url"] = self.page.url
 
             elif action == "click":
-                # Try primary selector first
                 try:
                     await self.page.click(arg, timeout=3000)
                     await self._human_delay(0.3, 1.0)
                     result["success"] = True
                 except Exception as e:
-                    # Retry with smart fallbacks
                     clicked = False
-                    # Try button with matching text if arg looks like a selector
                     try:
-                        # Extract text hints from the task to find buttons
                         submit_texts = ["submit", "submit order", "submit"]
                         for text in submit_texts:
                             btns = await self.page.query_selector_all("button, input[type='submit'], [type='submit']")
@@ -497,7 +483,6 @@ class BrowserAgent:
                     except:
                         pass
                     if not clicked:
-                        # Last resort: try the arg as-is one more time with longer timeout
                         try:
                             await self.page.click(arg, timeout=8000)
                             await self._human_delay(0.3, 1.0)
@@ -510,11 +495,9 @@ class BrowserAgent:
                 parts = arg.split(",", 1)
                 if len(parts) == 2:
                     selector, text = parts[0].strip(), parts[1].strip()
-                    # Strip outer quotes if AI included them
                     if (text.startswith('"') and text.endswith('"')) or \
                        (text.startswith("'") and text.endswith("'")):
                         text = text[1:-1]
-                    # Use fill() which auto-clears the field first
                     await self.page.fill(selector, text)
                     await self._human_delay(0.2, 0.6)
                     result["success"] = True
@@ -522,13 +505,11 @@ class BrowserAgent:
                     result["error"] = "Invalid type format: use selector, text"
 
             elif action == "check":
-                # Check a checkbox or radio button
                 try:
                     await self.page.check(arg, timeout=3000)
                     await self._human_delay(0.1, 0.3)
                     result["success"] = True
                 except Exception as e:
-                    # Fallback: try click on the selector
                     try:
                         await self.page.click(arg, timeout=5000)
                         await self._human_delay(0.1, 0.3)
@@ -538,13 +519,11 @@ class BrowserAgent:
                         result["success"] = False
 
             elif action == "select":
-                # Use click for radio buttons (select_option is for dropdowns only)
                 await self.page.click(arg)
                 await self._human_delay(0.1, 0.3)
                 result["success"] = True
 
             elif action == "submit":
-                # Submit a form
                 await self.page.click(arg)
                 await self._human_delay(0.5, 1.5)
                 result["success"] = True
@@ -563,7 +542,7 @@ class BrowserAgent:
 
             elif action == "screenshot":
                 result["success"] = True
-                result["screenshot"] = True  # Flag to take screenshot
+                result["screenshot"] = True
 
             elif action == "done":
                 result["success"] = True
@@ -571,7 +550,7 @@ class BrowserAgent:
 
         except Exception as e:
             result["error"] = str(e)[:200]
-        
+
         return result
 
     async def _take_screenshot(self) -> str:
@@ -581,154 +560,159 @@ class BrowserAgent:
             return base64.b64encode(ss).decode()
         return ""
 
-    async def execute(self, task: str, url: str, mode: str = "fast") -> dict:
-        """Execute a browser task — returns full result"""
-        await self._init_browser()
-
-        steps_executed = 0
-        steps_failed = 0
-        answer = None
-        max_steps = 15 if mode == "fast" else 500
-
-        # Navigate to start URL
-        try:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            await self._human_delay(1.0, 2.0)
-            # Auto-dismiss cookie banners on initial load
-            await self._dismiss_cookie_banner()
-            steps_executed += 1
-            self.history.append({"step": 1, "action": f"navigate({url})", "status": "ok"})
-        except Exception as e:
-            return {
-                "answer": f"Failed to navigate to {url}: {str(e)}",
-                "steps_executed": 0,
-                "steps_failed": 1,
-                "screenshot": await self._take_screenshot(),
-                "history": self.history,
-            }
-
-        for step_num in range(2, max_steps + 1):
-            # Get page state
-            page_content = await self._get_page_content()
-
-            # Call AI
-            ai_response = await self._call_ai(task, page_content)
-            action, arg = self._parse_action(ai_response)
-
-            self.history.append({
-                "step": step_num,
-                "action": action,
-                "arg": arg[:100] if arg else "",
-                "ai_response": ai_response[:200],
-            })
-
-            # Execute
-            result = await self._execute_action(action, arg)
-
-            if result["success"]:
-                steps_executed += 1
-                
-                if action == "done":
-                    answer = result.get("answer", arg)
-                    break
-                elif result.get("screenshot"):
-                    # Just a screenshot action, continue
-                    pass
-            else:
-                steps_failed += 1
-                if steps_failed > 3:
-                    answer = f"Stopped after {steps_failed} consecutive failures"
-                    break
-
-        # Final screenshot
-        screenshot = await self._take_screenshot()
-        await self.cleanup()
-
-        return {
-            "answer": answer or "Task completed",
-            "steps_executed": steps_executed,
-            "steps_failed": steps_failed,
-            "screenshot": screenshot,
-            "history": self.history,
-        }
-
     async def stream_execute(self, task: str, url: str, mode: str) -> AsyncGenerator[dict, None]:
-        """Stream step-by-step execution via WebSocket"""
+        """Stream step-by-step execution via WebSocket — FULL rich step data"""
         await self._init_browser()
 
         steps_executed = 0
         max_steps = 15 if mode == "fast" else 500
 
         # Navigate to start
+        nav_start = time.monotonic()
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await self._dismiss_cookie_banner()
             steps_executed += 1
-            yield {"step": steps_executed, "action": "navigate", "arg": url, "status": "executing"}
+            nav_ms = int((time.monotonic() - nav_start) * 1000)
+            yield {
+                "step": steps_executed,
+                "action": "navigate",
+                "argument": url,
+                "status": "completed",
+                "url": self.page.url,
+                "page_title": self.page.title() if self.page else "",
+                "duration_ms": nav_ms,
+                "model": "playwright",
+                "screenshot": await self._take_screenshot(),
+                "observation": f"Loaded {url}",
+            }
         except Exception as e:
-            yield {"step": 0, "action": "error", "error": f"Navigation failed: {str(e)}", "status": "failed"}
+            yield {
+                "step": 0, "action": "error", "error": f"Navigation failed: {str(e)}",
+                "status": "failed", "duration_ms": int((time.monotonic() - nav_start) * 1000),
+            }
             return
 
         for step_num in range(2, max_steps + 1):
             # Get page state
             page_content = await self._get_page_content()
+            page_data = self._parse_page_data(page_content)
+            page_title = page_data.get("title", "")
+            page_url = page_data.get("url", "")
+
+            # Build observation summary for frontend
+            form_fields = list(page_data.get("form", {}).keys())
+            interactives = page_data.get("interactives", [])
+            buttons = [i["text"] or i["selector"] for i in interactives if i["tag"] in ("button", "a") or i["type"] in ("submit", "button")]
+
+            observation_parts = []
+            if form_fields:
+                observation_parts.append(f"Forms: {', '.join(form_fields[:8])}")
+            if buttons:
+                observation_parts.append(f"Buttons: {', '.join(buttons[:6])}")
+            if page_title:
+                observation_parts.append(f"Title: {page_title}")
+            observation = " | ".join(observation_parts) or f"Page at {page_url}"
 
             # Call AI
-            ai_response = await self._call_ai(task, page_content)
+            ai_response, ai_ms, model_name = await self._call_ai(task, page_content)
             action, arg = self._parse_action(ai_response)
 
-            # Send AI reasoning
+            # Send THINKING step — agent is reasoning about what to do
             yield {
                 "step": step_num,
                 "action": action,
-                "argument": arg[:100] if arg else "",
-                "ai_reasoning": ai_response[:300],
+                "argument": arg[:150] if arg else "",
                 "status": "thinking",
+                "url": page_url,
+                "page_title": page_title,
+                "model": model_name,
+                "duration_ms": int(ai_ms),
+                "ai_reasoning": ai_response,
+                "observation": observation,
+                "screenshot": None,
+                "thinking": (
+                    f"[{model_name} · {ai_ms:.0f}ms]\n"
+                    f"Looking at: {page_title}\n"
+                    f"Task: {task[:80]}{'...' if len(task) > 80 else ''}\n"
+                    f"Observation: {observation[:200]}\n"
+                    f"Decision: {ai_response}"
+                ),
             }
 
             # Execute
+            exec_start = time.monotonic()
             result = await self._execute_action(action, arg)
+            exec_ms = int((time.monotonic() - exec_start) * 1000)
 
             if result["success"]:
                 steps_executed += 1
-                
+
                 if action == "done":
                     yield {
                         "step": step_num,
                         "action": "done",
-                        "answer": result.get("answer", arg),
+                        "argument": result.get("answer", arg),
                         "status": "completed",
+                        "url": self.page.url if self.page else page_url,
+                        "page_title": self.page.title() if self.page else page_title,
+                        "duration_ms": exec_ms,
+                        "model": model_name,
+                        "ai_reasoning": ai_response,
+                        "observation": observation,
                         "screenshot": await self._take_screenshot(),
+                        "answer": result.get("answer", arg),
                     }
                     return
+                elif result.get("screenshot"):
+                    pass
+
+                # Send SUCCESS snapshot
+                screenshot = await self._take_screenshot()
+                yield {
+                    "step": step_num,
+                    "action": action,
+                    "argument": arg[:150] if arg else "",
+                    "status": "completed",
+                    "url": self.page.url if self.page else page_url,
+                    "page_title": self.page.title() if self.page else page_title,
+                    "duration_ms": exec_ms,
+                    "model": model_name,
+                    "ai_reasoning": ai_response,
+                    "observation": observation,
+                    "screenshot": screenshot,
+                    "error": None,
+                }
             else:
                 yield {
                     "step": step_num,
                     "action": "error",
-                    "error": result.get("error", "Unknown error"),
+                    "argument": arg[:150] if arg else "",
                     "status": "retrying",
+                    "url": page_url,
+                    "page_title": page_title,
+                    "duration_ms": exec_ms,
+                    "model": model_name,
+                    "ai_reasoning": ai_response,
+                    "observation": observation,
+                    "screenshot": await self._take_screenshot(),
+                    "error": result.get("error", "Unknown error"),
+                    "retry_count": 1,
                 }
                 continue
 
-            # Send screenshot after each action
-            screenshot = await self._take_screenshot()
-            yield {
-                "step": step_num,
-                "action": action,
-                "screenshot": screenshot,
-                "url": self.page.url if self.page else "",
-                "status": "snapshot",
-            }
-
-            # Human-like delay between steps
             await self._human_delay(0.5, 1.5)
 
         # Max steps reached
         yield {
             "step": steps_executed,
             "action": "done",
-            "answer": f"Reached maximum steps ({max_steps})",
+            "argument": f"Reached maximum steps ({max_steps})",
             "status": "completed",
+            "url": self.page.url if self.page else "",
+            "page_title": self.page.title() if self.page else "",
+            "duration_ms": 0,
+            "model": model_name,
             "screenshot": await self._take_screenshot(),
         }
 
@@ -740,21 +724,21 @@ class BrowserAgent:
         except:
             pass
         self.page = None
-        
+
         try:
             if self.context:
                 await self.context.close()
         except:
             pass
         self.context = None
-        
+
         try:
             if self.browser:
                 await self.browser.close()
         except:
             pass
         self.browser = None
-        
+
         try:
             if self.playwright:
                 await self.playwright.stop()
