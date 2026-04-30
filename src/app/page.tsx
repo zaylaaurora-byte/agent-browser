@@ -258,6 +258,8 @@ export default function Home() {
     });
   };
 
+  // Count ALL steps (including thinking) for pipeline progress
+  const totalStepsSeen = steps.length;
   const completedSteps = steps.filter(
     (s) => s.status === "completed" || s.action === "done"
   ).length;
@@ -282,8 +284,9 @@ export default function Home() {
     { label: "Observe", icon: "👁" },
     { label: "Done", icon: "✅" },
   ];
+  // Phase: 0=Task, 1=Navigate, 2=Analyze, 3=Act, 4=Observe, 5=Done
   const currentPhase = isRunning
-    ? 2 + Math.min(Math.floor(completedSteps / 2), 4)
+    ? Math.min(1 + totalStepsSeen, 5)
     : finalAnswer
     ? 5
     : 0;
@@ -630,8 +633,8 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Screenshot filmstrip */}
-              {screenshotHistory.length > 1 && (
+              {/* Screenshot filmstrip — show when 1+ screenshots exist */}
+              {screenshotHistory.length > 0 && (
                 <div className="border-t border-zinc-800/40 p-3 bg-zinc-950/50">
                   <div className="flex gap-2 overflow-x-auto pb-1">
                     {screenshotHistory.map((ss, i) => (
@@ -789,7 +792,9 @@ export default function Home() {
                   const isDone = step.action === "done";
                   const isThinking = step.status === "thinking";
                   const isExpanded = expandedSteps.has(step.step);
-                  const hasDetails = !!(step.observation || step.ai_reasoning || step.url || step.duration_ms != null || step.error);
+                  // Show reasoning toggle if ANY detail field is present (observation, ai_reasoning, url, duration, error)
+                  const hasDetails = !!(step.observation || step.ai_reasoning || step.url || step.duration_ms != null || step.error || step.thinking);
+                  const hasReasoningToShow = !!(step.ai_reasoning || step.thinking);
 
                   return (
                     <div
@@ -846,8 +851,8 @@ export default function Home() {
                             </div>
                           )}
 
-                          {/* AI Reasoning — expandable */}
-                          {step.ai_reasoning && hasDetails && (
+                          {/* AI Reasoning — expandable, show if ANY reasoning field exists */}
+                          {hasReasoningToShow && (
                             <button
                               onClick={() => toggleExpanded(step.step)}
                               className="mt-2 flex items-center gap-1.5 text-[9px] text-violet-400/70 hover:text-violet-400 transition-colors"
@@ -857,11 +862,11 @@ export default function Home() {
                             </button>
                           )}
 
-                          {isExpanded && step.ai_reasoning && (
+                          {isExpanded && hasReasoningToShow && (
                             <div className="mt-2 p-2.5 bg-zinc-900/80 rounded-xl border border-zinc-800/50">
                               <div className="text-[8px] text-violet-500 uppercase tracking-widest mb-1">💬 Reasoning</div>
                               <pre className="text-[10px] text-zinc-400 font-mono leading-relaxed whitespace-pre-wrap">
-                                {step.ai_reasoning}
+                                {step.thinking || step.ai_reasoning}
                               </pre>
                             </div>
                           )}

@@ -59,19 +59,30 @@ async def execute_task(req: TaskRequest):
     agent = BrowserAgent()
     
     try:
-        result = await agent.execute(
-            task=req.task,
-            url=req.url,
-            mode=req.mode
-        )
-        
+        # Collect all streamed steps
+        steps_executed = 0
+        steps_failed = 0
+        answer = None
+        screenshot = None
+        async for step in agent.stream_execute(task=req.task, url=req.url, mode=req.mode):
+            if step.get("status") == "completed" and step.get("action") == "done":
+                answer = step.get("answer")
+                screenshot = step.get("screenshot")
+                steps_executed += 1
+            elif step.get("status") == "completed":
+                steps_executed += 1
+                if step.get("screenshot"):
+                    screenshot = step["screenshot"]
+            elif step.get("status") == "retrying" or step.get("status") == "failed":
+                steps_failed += 1
+
         return TaskResponse(
             session_id=session_id,
             status="completed",
-            answer=result.get("answer"),
-            steps_executed=result.get("steps_executed", 0),
-            steps_failed=result.get("steps_failed", 0),
-            screenshot=result.get("screenshot")
+            answer=answer or "Task completed",
+            steps_executed=steps_executed,
+            steps_failed=steps_failed,
+            screenshot=screenshot
         )
     except Exception as e:
         return TaskResponse(

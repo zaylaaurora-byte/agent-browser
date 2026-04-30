@@ -580,7 +580,7 @@ class BrowserAgent:
                 "argument": url,
                 "status": "completed",
                 "url": self.page.url,
-                "page_title": self.page.title() if self.page else "",
+                "page_title": await self.page.title() if self.page else "",
                 "duration_ms": nav_ms,
                 "model": "playwright",
                 "screenshot": await self._take_screenshot(),
@@ -597,7 +597,7 @@ class BrowserAgent:
             # Get page state
             page_content = await self._get_page_content()
             page_data = self._parse_page_data(page_content)
-            page_title = page_data.get("title", "")
+            page_title_val = await self.page.title() if self.page else ""
             page_url = page_data.get("url", "")
 
             # Build observation summary for frontend
@@ -610,8 +610,8 @@ class BrowserAgent:
                 observation_parts.append(f"Forms: {', '.join(form_fields[:8])}")
             if buttons:
                 observation_parts.append(f"Buttons: {', '.join(buttons[:6])}")
-            if page_title:
-                observation_parts.append(f"Title: {page_title}")
+            if page_title_val:
+                observation_parts.append(f"Title: {page_title_val}")
             observation = " | ".join(observation_parts) or f"Page at {page_url}"
 
             # Call AI
@@ -625,7 +625,7 @@ class BrowserAgent:
                 "argument": arg[:150] if arg else "",
                 "status": "thinking",
                 "url": page_url,
-                "page_title": page_title,
+                "page_title": page_title_val,
                 "model": model_name,
                 "duration_ms": int(ai_ms),
                 "ai_reasoning": ai_response,
@@ -633,7 +633,7 @@ class BrowserAgent:
                 "screenshot": None,
                 "thinking": (
                     f"[{model_name} · {ai_ms:.0f}ms]\n"
-                    f"Looking at: {page_title}\n"
+                    f"Looking at: {page_title_val}\n"
                     f"Task: {task[:80]}{'...' if len(task) > 80 else ''}\n"
                     f"Observation: {observation[:200]}\n"
                     f"Decision: {ai_response}"
@@ -655,7 +655,7 @@ class BrowserAgent:
                         "argument": result.get("answer", arg),
                         "status": "completed",
                         "url": self.page.url if self.page else page_url,
-                        "page_title": self.page.title() if self.page else page_title,
+                        "page_title": await self.page.title() if self.page else page_title_val,
                         "duration_ms": exec_ms,
                         "model": model_name,
                         "ai_reasoning": ai_response,
@@ -675,7 +675,7 @@ class BrowserAgent:
                     "argument": arg[:150] if arg else "",
                     "status": "completed",
                     "url": self.page.url if self.page else page_url,
-                    "page_title": self.page.title() if self.page else page_title,
+                    "page_title": await self.page.title() if self.page else page_title_val,
                     "duration_ms": exec_ms,
                     "model": model_name,
                     "ai_reasoning": ai_response,
@@ -690,7 +690,7 @@ class BrowserAgent:
                     "argument": arg[:150] if arg else "",
                     "status": "retrying",
                     "url": page_url,
-                    "page_title": page_title,
+                    "page_title": page_title_val,
                     "duration_ms": exec_ms,
                     "model": model_name,
                     "ai_reasoning": ai_response,
@@ -710,7 +710,7 @@ class BrowserAgent:
             "argument": f"Reached maximum steps ({max_steps})",
             "status": "completed",
             "url": self.page.url if self.page else "",
-            "page_title": self.page.title() if self.page else "",
+            "page_title": await self.page.title() if self.page else "",
             "duration_ms": 0,
             "model": model_name,
             "screenshot": await self._take_screenshot(),
