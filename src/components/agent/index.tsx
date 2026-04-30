@@ -18,7 +18,7 @@ export { QUICK_SITES } from "./types";
 export function AgentBrowser() {
   const [url, setUrl]           = useState("https://httpbin.org/forms/post");
   const [task, setTask]         = useState(
-    "Fill and submit the pizza order form: Type John Connor in name, 07123456789 in phone, john@example.com in email. Select Large pizza size. Check Bacon topping. Click Submit. Report the result page."
+    "Go to the page and describe what you see — identify any forms, buttons, and interactive elements."
   );
   const [mode, setMode]         = useState<Mode>("deep");
   const [isRunning, setIsRunning]         = useState(false);

@@ -828,6 +828,34 @@ class BrowserAgent:
             except Exception as js_err:
                 logger.warning(f"JS check fallback failed: {js_err}")
 
+        # ── Evaluate failures: try alternate JS approaches ─────────────────────
+        if action == "evaluate":
+            try:
+                # Try wrapping in try-catch and return structured result
+                alt_js = f"""
+                (function() {{
+                    try {{
+                        var __result = ({arg});
+                        return JSON.stringify({{ok: true, result: __result}});
+                    }} catch(e) {{
+                        return JSON.stringify({{ok: false, error: e.message}});
+                    }}
+                }})();
+                """
+                js_result = await self.page.evaluate(alt_js)
+                import json as _json
+                parsed = _json.loads(js_result)
+                if parsed.get("ok"):
+                    await self._human_delay(0.2, 0.5)
+                    return True, {"success": True, "answer": str(parsed.get("result", ""))[:500]}
+                else:
+                    # Try simpler eval without IIFE wrapping
+                    simple_result = await self.page.evaluate(arg)
+                    await self._human_delay(0.2, 0.5)
+                    return True, {"success": True, "answer": str(simple_result)[:500]}
+            except Exception as js_err:
+                logger.warning(f"JS evaluate fallback failed: {js_err}")
+
         return False, result
 
     async def _execute_action(self, action: str, arg: str) -> dict:
@@ -884,7 +912,19 @@ class BrowserAgent:
                     if (text.startswith('"') and text.endswith('"')) or \
                        (text.startswith("'") and text.endswith("'")):
                         text = text[1:-1]
-                    await self.page.fill(selector, text, no_wait_after=True)
+                    # Check if field already has content — triple-click to select all before filling
+                    # to avoid double-typing on pre-filled or re-visited fields
+                    try:
+                        current_val = await self.page.eval_on_selector(selector, "el => el.value")
+                        if current_val:
+                            await self.page.click(selector)
+                            await self.page.keyboard.press("Control+a")
+                            await self.page.keyboard.type(text, delay=random.uniform(30, 80))
+                        else:
+                            await self.page.fill(selector, text, no_wait_after=True)
+                    except Exception:
+                        # Fallback: just fill
+                        await self.page.fill(selector, text, no_wait_after=True)
                     await self._human_delay(0.2, 0.6)
                     result["success"] = True
                 else:
@@ -906,9 +946,34 @@ class BrowserAgent:
                         result["success"] = False
 
             elif action == "select":
-                await self.page.click(arg)
-                await self._human_delay(0.1, 0.3)
-                result["success"] = True
+                # Proper <select> interaction — open dropdown then pick option by text
+                try:
+                    parts = arg.rsplit(",", 1)
+                    if len(parts) == 2:
+                        # format: "select[name=size], large" — select by option text
+                        sel, opt_text = parts[0].strip(), parts[1].strip()
+                        await self.page.click(sel)
+                        await asyncio.sleep(0.2)
+                        # Click option by text match
+                        opt_xpath = f"//option[contains(text(),'{opt_text}')]"
+                        await self.page.click(f"{sel} >> xpath={opt_xpath}", timeout=3000)
+                    else:
+                        # Just a selector — click to open the dropdown
+                        await self.page.click(arg)
+                    await self._human_delay(0.1, 0.3)
+                    result["success"] = True
+                except Exception as e:
+                    # Fallback: try native select_option
+                    try:
+                        el = await self.page.query_selector(arg)
+                        if el and el.get_attribute("tagName", "").lower() == "select":
+                            await el.select_option(arg)
+                        else:
+                            await self.page.click(arg)
+                        await self._human_delay(0.1, 0.3)
+                        result["success"] = True
+                    except Exception:
+                        result["error"] = f"select failed: {str(e)[:80]}"
 
             elif action == "select_option":
                 # arg format: "selector, value"
@@ -1041,7 +1106,7 @@ class BrowserAgent:
         await self._init_browser()
 
         steps_executed = 0
-        max_steps = 15 if mode == "fast" else 500
+        max_steps = 15 if mode == "fast" else (25 if mode == "deep" else 15)
 
         # Navigate to start
         nav_start = time.monotonic()
@@ -1192,21 +1257,9 @@ class BrowserAgent:
                     }
 
                     # If get_text/evaluate, surface the extracted value in observation
+                    # Only take screenshot if the page actually changed (not for pure reads)
                     if answer_val:
-                        yield {
-                            "step": step_num,
-                            "action": action,
-                            "argument": arg[:150] if arg else "",
-                            "status": "completed",
-                            "url": self.page.url if self.page else page_url,
-                            "page_title": await self.page.title() if self.page else page_title_val,
-                            "duration_ms": 0,
-                            "model": model_name,
-                            "ai_reasoning": "",
-                            "observation": f"Extracted: {answer_val[:200]}",
-                            "screenshot": None,
-                            "error": None,
-                        }
+                        pass  # skip extra screenshot for read-only actions
                 else:
                     # ── Retry intelligence ─────────────────────────────────────────
                     retry_success = False
