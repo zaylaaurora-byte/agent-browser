@@ -152,7 +152,7 @@ class BrowserAgent:
                 if el["tag"] in ("button", "a") or el["type"] in ("submit", "button"):
                     int_lines.append(f"  {el['text'] or el['selector']}: {el['selector']}")
                 elif el["tag"] == "input":
-                    int_lines.append(f"  [{el['type']}] {el['selector']}: {el['placeholder'] or el.get('text','')}")
+                    int_lines.append(f"  [{el['type']}] {el['selector']}: placeholder='{el['placeholder'] or ''}' current='{el.get('value','')}'")
 
         content_parts = [f"Task: {task}"]
         if form_lines:
@@ -346,7 +346,8 @@ class BrowserAgent:
                         text: text.slice(0, 30),
                         href: href.slice(0, 50),
                         type,
-                        placeholder: placeholder.slice(0, 30)
+                        placeholder: placeholder.slice(0, 30),
+                        value: (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : '',
                     });
                 });
 
@@ -460,7 +461,8 @@ class BrowserAgent:
 
             elif action == "click":
                 try:
-                    await self.page.click(arg, timeout=3000)
+                    # Use commit to avoid hanging on button clicks that don't navigate
+                    await self.page.click(arg, wait_for_load_state="commit", timeout=5000)
                     await self._human_delay(0.3, 1.0)
                     result["success"] = True
                 except Exception as e:
@@ -498,7 +500,7 @@ class BrowserAgent:
                     if (text.startswith('"') and text.endswith('"')) or \
                        (text.startswith("'") and text.endswith("'")):
                         text = text[1:-1]
-                    await self.page.fill(selector, text)
+                    await self.page.fill(selector, text, no_wait_after=True)
                     await self._human_delay(0.2, 0.6)
                     result["success"] = True
                 else:
@@ -506,12 +508,13 @@ class BrowserAgent:
 
             elif action == "check":
                 try:
-                    await self.page.check(arg, timeout=3000)
+                    # no_wait_after to avoid hanging on elements that don't trigger network changes
+                    await self.page.check(arg, timeout=5000, no_wait_after=True)
                     await self._human_delay(0.1, 0.3)
                     result["success"] = True
                 except Exception as e:
                     try:
-                        await self.page.click(arg, timeout=5000)
+                        await self.page.click(arg, wait_for_load_state="commit", timeout=5000)
                         await self._human_delay(0.1, 0.3)
                         result["success"] = True
                     except:
@@ -534,7 +537,7 @@ class BrowserAgent:
                 except asyncio.TimeoutError:
                     # Fallback: just click without waiting
                     try:
-                        await self.page.click(arg, no_wait_after=True)
+                        await self.page.click(arg, wait_for_load_state="commit", timeout=8000)
                     except Exception:
                         pass
                 await self._human_delay(0.5, 1.5)

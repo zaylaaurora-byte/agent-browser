@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
+import { Navbar } from "@/components/navbar";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
 
 export const metadata: Metadata = {
   title: "Agent Browser — AI-Powered Browser Automation",
@@ -13,8 +20,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="antialiased bg-zinc-950 text-zinc-100">
-        {children}
+      <body className={`${inter.variable} font-sans antialiased bg-[#050508] text-zinc-100`}>
+        <Navbar />
+        <main>{children}</main>
       </body>
     </html>
   );

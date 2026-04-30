@@ -3,8 +3,8 @@
   "language": "javascript/typescript",
   "framework": "next.js",
   "started": "2026-04-29T23:26:40.042828",
-  "cycles_completed": 44,
-  "last_cycle": "2026-04-30T19:55:37.926970",
+  "cycles_completed": 45,
+  "last_cycle": "2026-04-30T22:43:46.097482",
   "questions_log": {
     "last_run": "2026-04-30T03:32:16.207281",
     "answers": {
@@ -64,7 +64,7 @@
       "improve"
     ],
     "security_issues": 0,
-    "live_tests_passed": 3,
+    "live_tests_passed": 2,
     "live_tests_total": 4
   },
   "history": [
@@ -501,6 +501,16 @@
       "issues_blocked": 0,
       "commit": "af5973d4",
       "timestamp": "2026-04-30T19:55:37.926924"
+    },
+    {
+      "cycle": 45,
+      "action": "improve",
+      "live_passed": 2,
+      "live_total": 4,
+      "issues_fixed": 0,
+      "issues_blocked": 0,
+      "commit": "307b16ac",
+      "timestamp": "2026-04-30T22:43:46.097441"
     }
   ],
   "fixed_issues": [
@@ -625,18 +635,26 @@
     {
       "type": "proxy_broken",
       "desc": "Proxy returned: <!DOCTYPE html><html lang=\"en\" class=\"h-full\" style=\"background-color:#07091a\"><head><meta charSet=\""
+    },
+    {
+      "type": "frontend_not_serving",
+      "desc": "Frontend not serving (exit 28)"
+    },
+    {
+      "type": "proxy_broken",
+      "desc": "Frontend proxy failed (exit 28)"
     }
   ],
   "needs_human": [],
   "improvements_done": [],
   "improvements_backlog": [],
-  "last_good_commit": "af5973d4",
+  "last_good_commit": "307b16ac",
   "death_spiral": false,
   "live_test_results": [
     [
       "api_execute",
       true,
-      "\u2705 API works: <think>The user is asking me to identify the page title of the current page, whi"
+      "\u2705 API works: <think>The user is asking me to get the page title of the current page, which is"
     ],
     [
       "health_endpoint",
@@ -645,13 +663,13 @@
     ],
     [
       "frontend_serves",
-      true,
-      "\u2705 Frontend serves HTML"
+      false,
+      "Frontend not serving (exit 28)"
     ],
     [
       "frontend_proxy",
       false,
-      "Proxy returned: <!DOCTYPE html><html lang=\"en\" class=\"h-full\" style=\"background-color:#07091a\"><head><meta charSet=\""
+      "Frontend proxy failed (exit 28)"
     ]
   ]
 }
