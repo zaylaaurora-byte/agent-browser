@@ -210,6 +210,81 @@ class BrowserAgent:
             self.page.set_default_timeout(15000)
             self.page.set_default_navigation_timeout(30000)
 
+    async def _dismiss_cookie_banner(self):
+        """Auto-dismiss common cookie consent banners"""
+        try:
+            # Wait briefly for banner to appear
+            await asyncio.sleep(0.5)
+            # Common cookie button selectors
+            cookie_selectors = [
+                "[aria-label='Accept all cookies']",
+                "[aria-label='Accept cookies']",
+                "[aria-label='Accept']",
+                "[aria-label='Agree']",
+                "[aria-label='Allow cookies']",
+                "[aria-label='Allow all']",
+                "[aria-label='Reject all']",
+                "[aria-label='Decline all']",
+                "[aria-label='Decline cookies']",
+                "[aria-label='Dismiss']",
+                "[aria-label='Close']",
+                "[title='Accept']",
+                "[title='Accept all']",
+                "[title='Agree']",
+                "[title='Allow']",
+                "[title='Allow all']",
+                "[title='Reject']",
+                "[title='Decline']",
+                "[title='Dismiss']",
+                "[id*='cookie'][aria-label*='accept']",
+                "[id*='cookie'][aria-label*='Accept']",
+                "[id*='consent'] button",
+                "[class*='cookie'] button",
+                "[class*='Cookie'] button",
+                "[id*='cookie-consent']",
+                "[id*='CookieConsent']",
+                "[class*='cookie-consent']",
+                "[class*='CookieConsent']",
+                "[id*='gdpr']",
+                "[class*='gdpr']",
+                "[id*='privacy-consent']",
+                "[class*='privacy-consent']",
+                "button[title='Accept all']",
+                "button[title='Accept']",
+                "button:text('Accept')",
+                "button:text('Accept all')",
+                "button:text('Accept all cookies')",
+                "button:text('Accept cookies')",
+                "button:text('Allow')",
+                "button:text('Allow all')",
+                "button:text('Agree')",
+                "button:text('Decline')",
+                "button:text('Reject')",
+                "button:text('Reject all')",
+                "button:text('Dismiss')",
+                "button:text('Continue')",
+                "button:text('Got it')",
+                "button:text('I agree')",
+                "input[value='Accept']",
+                "input[value='Accept all']",
+                "input[value='Allow']",
+                "input[value='Agree']",
+                "a[aria-label*='accept']",
+                "a[aria-label*='Accept']",
+            ]
+            for selector in cookie_selectors:
+                try:
+                    elem = await self.page.query_selector(selector)
+                    if elem:
+                        await elem.click(timeout=2000)
+                        await self._human_delay(0.3, 0.6)
+                        logger.info(f"Dismissed cookie banner with selector: {selector}")
+                        return
+                except:
+                    continue
+        except Exception as e:
+            logger.warning(f"Cookie banner dismiss failed: {e}")
+
     async def _human_delay(self, min_s: float = 0.5, max_s: float = 2.0):
         """Random human-like delay"""
         await asyncio.sleep(random.uniform(min_s, max_s))
@@ -388,13 +463,48 @@ class BrowserAgent:
                 url = arg if arg.startswith("http") else f"https://{arg}"
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await self._human_delay(0.5, 1.5)
+                # Auto-dismiss cookie banners
+                await self._dismiss_cookie_banner()
                 result["success"] = True
                 result["url"] = self.page.url
 
             elif action == "click":
-                await self.page.click(arg, timeout=5000)
-                await self._human_delay(0.3, 1.0)
-                result["success"] = True
+                # Try primary selector first
+                try:
+                    await self.page.click(arg, timeout=3000)
+                    await self._human_delay(0.3, 1.0)
+                    result["success"] = True
+                except Exception as e:
+                    # Retry with smart fallbacks
+                    clicked = False
+                    # Try button with matching text if arg looks like a selector
+                    try:
+                        # Extract text hints from the task to find buttons
+                        submit_texts = ["submit", "submit order", "submit"]
+                        for text in submit_texts:
+                            btns = await self.page.query_selector_all("button, input[type='submit'], [type='submit']")
+                            for btn in btns:
+                                btn_text = (await btn.inner_text()).lower().strip()
+                                btn_type = await btn.get_attribute("type") or ""
+                                if text in btn_text or btn_type == "submit":
+                                    await btn.click()
+                                    await self._human_delay(0.3, 1.0)
+                                    result["success"] = True
+                                    clicked = True
+                                    break
+                            if clicked:
+                                break
+                    except:
+                        pass
+                    if not clicked:
+                        # Last resort: try the arg as-is one more time with longer timeout
+                        try:
+                            await self.page.click(arg, timeout=8000)
+                            await self._human_delay(0.3, 1.0)
+                            result["success"] = True
+                        except:
+                            result["error"] = f"Click failed for '{arg}': {str(e)[:80]}"
+                            result["success"] = False
 
             elif action == "type":
                 parts = arg.split(",", 1)
@@ -413,9 +523,19 @@ class BrowserAgent:
 
             elif action == "check":
                 # Check a checkbox or radio button
-                await self.page.check(arg)
-                await self._human_delay(0.1, 0.3)
-                result["success"] = True
+                try:
+                    await self.page.check(arg, timeout=3000)
+                    await self._human_delay(0.1, 0.3)
+                    result["success"] = True
+                except Exception as e:
+                    # Fallback: try click on the selector
+                    try:
+                        await self.page.click(arg, timeout=5000)
+                        await self._human_delay(0.1, 0.3)
+                        result["success"] = True
+                    except:
+                        result["error"] = f"Check failed for '{arg}': {str(e)[:80]}"
+                        result["success"] = False
 
             elif action == "select":
                 # Use click for radio buttons (select_option is for dropdowns only)
@@ -474,6 +594,8 @@ class BrowserAgent:
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await self._human_delay(1.0, 2.0)
+            # Auto-dismiss cookie banners on initial load
+            await self._dismiss_cookie_banner()
             steps_executed += 1
             self.history.append({"step": 1, "action": f"navigate({url})", "status": "ok"})
         except Exception as e:
@@ -540,6 +662,7 @@ class BrowserAgent:
         # Navigate to start
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await self._dismiss_cookie_banner()
             steps_executed += 1
             yield {"step": steps_executed, "action": "navigate", "arg": url, "status": "executing"}
         except Exception as e:
