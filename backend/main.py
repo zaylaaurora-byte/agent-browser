@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Agent Browser - FastAPI Backend"""
 import os
 import json
@@ -16,9 +18,9 @@ from browser_agent import BrowserAgent
 # Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Agent Browser API starting...")
+    logger.info("🚀 Agent Browser API starting...")
     yield
-    print("👋 Agent Browser API shutting down...")
+    logger.info("👋 Agent Browser API shutting down...")
 
 app = FastAPI(title="Agent Browser API", version="1.0.0", lifespan=lifespan)
 
