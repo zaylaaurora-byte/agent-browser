@@ -1046,17 +1046,20 @@ class BrowserAgent:
         import re
         text = raw.strip()
         
-        # Remove <think_>...</think_> blocks (MiniMax thinking tag)
-        text = re.sub(r'<think_>[\s\S]*?</think_>', '', text)
+        # Remove <think thinker>...</think thinker> blocks (MiniMax-M2.7 extended thinking)
+        text = re.sub(r'<think thinker>[\\s\\S]*?</think thinker>', '', text)
+        
+        # Also catch <think_> variant
+        text = re.sub(r'<think_>[\\s\\S]*?</think_>', '', text)
         
         # Remove any XML-style thinking blocks
-        text = re.sub(r'<thinking>[\s\S]*?</thinking>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<thinking>[\\s\\S]*?</thinking>', '', text, flags=re.IGNORECASE)
         
         # Remove Unicode-wrapped thinking blocks (⋀...⋉ or similar)
-        text = re.sub(r'⋀[\s\S]*?⋉', '', text)
+        text = re.sub(r'⋀[\\s\\S]*?⋉', '', text)
         
         # Remove <thought> tags
-        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<thought>[\\s\\S]*?</thought>', '', text, flags=re.IGNORECASE)
         
         # If the response contains ACTION: lines, strip everything before the first one
         # (this removes any leaked reasoning that appears before the actions)
