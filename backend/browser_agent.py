@@ -341,6 +341,12 @@ class BrowserAgent:
         shadow_dom_count = data.get("shadow_dom_count", 0)
         if shadow_dom_count > 0:
             warnings.append(f"ℹ {shadow_dom_count} shadow DOM element(s)")
+        login_wall = data.get("login_wall")
+        if login_wall and login_wall.get("detected"):
+            if login_wall.get("has_skip"):
+                warnings.append(f"⚠ LOGIN WALL DETECTED — page redirected to login/signup. Try: {login_wall.get('skip_selector', 'skip/guest link')} to bypass.")
+            else:
+                warnings.append("⚠ LOGIN WALL DETECTED — page requires login/signup. No skip/guest option found. Report to user.")
 
         content_parts = [f"Task: {task}"]
         if warnings:
@@ -352,7 +358,7 @@ class BrowserAgent:
         content_parts.append(f"\nPage: {data.get('title','unknown')} — {data.get('url','')}")
 
         content = "\n".join(content_parts)
-        messages.append({"role": "user", "content": content[:1200]})
+        messages.append({"role": "user", "content": content[:3000]})
         return messages
 
     async def _init_browser(self):
@@ -766,7 +772,7 @@ class BrowserAgent:
         try:
             # First wait briefly for dynamic content to settle
             try:
-                await self.page.wait_for_load_state("networkidle", timeout=3000)
+                await self.page.wait_for_load_state("networkidle", timeout=8000)
             except Exception:
                 pass
 
@@ -818,6 +824,29 @@ class BrowserAgent:
                 else if (hcaptcha) captchaDetected = 'hcaptcha';
                 else if (recaptcha) captchaDetected = 'recaptcha';
                 else if (genericCaptcha) captchaDetected = 'generic';
+
+                // ── Login wall / auth wall detection ────────────────────────────────
+                let loginWall = null;
+                const currentUrl = window.location.href.toLowerCase();
+                const hasEmailField = !!document.querySelector('input[type="email"], input[name*="email"], input[name*="login"], input[placeholder*="email" i]');
+                const hasPasswordField = !!document.querySelector('input[type="password"]');
+                const loginKeywords = ['sign in', 'log in', 'login', 'create account', 'sign up', 'register'];
+                const pageTextLower = (document.body?.textContent || '').toLowerCase().slice(0, 2000);
+                const hasLoginKeyword = loginKeywords.some(kw => pageTextLower.includes(kw));
+                const loginUrls = ['/login', '/signin', '/sign-in', '/auth', '/account/login'];
+                const hasLoginUrl = loginUrls.some(u => currentUrl.includes(u));
+                if ((hasEmailField && hasPasswordField) || (hasLoginUrl && hasLoginKeyword)) {
+                    const skipLinks = Array.from(document.querySelectorAll('a, button')).filter(el => {
+                        const t = (el.textContent || '').toLowerCase();
+                        return ['skip', 'guest', 'browse without', 'continue without', 'later', 'no thanks', 'not now'].some(kw => t.includes(kw));
+                    });
+                    loginWall = {
+                        detected: true,
+                        url: window.location.href,
+                        has_skip: skipLinks.length > 0,
+                        skip_selector: skipLinks[0] ? (skipLinks[0].id ? '#' + skipLinks[0].id : (skipLinks[0].className ? 'a.' + skipLinks[0].className.split(' ')[0] : 'a')) : null
+                    };
+                }
 
                 // ── Shadow DOM elements ──────────────────────────────────────────
                 const shadowHosts = document.querySelectorAll('*');
@@ -969,15 +998,16 @@ class BrowserAgent:
                 return JSON.stringify({
                     url: window.location.href,
                     title: document.title,
-                    text: texts.slice(0, 100).join(' ').slice(0, 2000),
+                    text: texts.slice(0, 200).join(' ').slice(0, 4000),
                     form: formMap,
-                    interactives: interactives.slice(0, 30),
+                    interactives: interactives.slice(0, 60),
                     // Phase 3.2 enriched fields
                     page_state: hasPendingRequests ? 'spa/dynamic' : 'static',
                     cookie_banner: cookieBannerDetected,
                     cookie_banner_text: cookieBannerText,
                     popup_dialog: popupDialog,
                     captcha: captchaDetected,
+                    login_wall: loginWall,
                     shadow_dom_count: shadowDomCount,
                     iframes: iframeInfo,
                     iframe_count: iframes.length,
@@ -1499,10 +1529,20 @@ class BrowserAgent:
 
         steps_executed = 0
 
+        # Mode-based step limits
+        mode_limits = {"fast": 12, "standard": 20, "deep": 30}
+        max_steps = mode_limits.get(mode.lower(), mode_limits.get("fast", 15))
+
         # Navigate to start
         nav_start = time.monotonic()
         try:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Try primary navigation strategy
+            try:
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as nav_err:
+                # Retry with more relaxed waiting
+                logger.warning(f"Primary nav failed ({nav_err}), retrying with load strategy")
+                await self.page.goto(url, wait_until="load", timeout=45000)
             await self._dismiss_cookie_banner()
             # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
             await self._dismiss_captcha_iframe()
@@ -1529,6 +1569,8 @@ class BrowserAgent:
             return
 
         for step_num in itertools.count(start=2):
+            if step_num > max_steps + 1:  # +1 because step 1 is navigation
+                break
             # Get page state
             page_content = await self._get_page_content()
             page_data = self._parse_page_data(page_content)
@@ -1604,6 +1646,10 @@ class BrowserAgent:
                 captcha_domain = await self._dismiss_captcha_iframe()
                 if captcha_domain:
                     logger.info(f"CAPTCHA detected during {action} — dismissed {captcha_domain}")
+
+                # Auto-dismiss popups/modals/cookie banners that appear mid-task
+                if action not in ("done", "screenshot", "wait"):
+                    await self._dismiss_cookie_banner()
 
                 try:
                     result = await asyncio.wait_for(
