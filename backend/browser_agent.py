@@ -1022,14 +1022,17 @@ class BrowserAgent:
 
                 # Build extra params — MiniMax-native controls
                 extra = {}
-                # Disable extended thinking if supported (reduces reasoning token overhead)
+                # MiniMax extended thinking chews through token budget fast
+                # Use very high max_tokens so visible answer text can emerge after thinking exhausts
+                # Also try to disable extended thinking via MiniMax native param
                 if "MiniMax" in model_name or "minimax" in model_name.lower():
                     extra["thinking_params"] = {"type": "off"}  # MiniMax native param
+                    extra["extra_headers"] = {"X-MiniMax-Thinking": "off"}  # also try header variant
 
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    max_tokens=2000,
+                    max_tokens=32000,  # Was 2000 — too small for extended thinking + answer
                     temperature=0.3,
                     **(extra if extra else {}),
                 )
