@@ -371,6 +371,7 @@ class BrowserAgent:
         proxy_country: str = "us",
         proxy_url: Optional[str] = None,
         proxy_rotate_every: int = 20,
+        session_name: Optional[str] = None,
     ):
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         self.model_name = model_name or os.getenv("AI_MODEL", "MiniMax-M2.7")
@@ -382,6 +383,14 @@ class BrowserAgent:
         self.conversation_history: list = []
         self._camoufox_ctx = None   # holds camoufox context manager for cleanup
         self._browser_engine = "chromium"
+
+        # Session persistence (Phase 2)
+        self.session_name = session_name
+        from session_manager import SessionManager
+        self.session_manager = SessionManager(self)
+        self.viewport = None   # set after _init_browser
+        self.user_agent = None
+        self.proxy_url = proxy_url
 
         # Proxy rotation
         self.proxy_manager = ProxyManager(
@@ -588,6 +597,14 @@ class BrowserAgent:
 
         self.page.set_default_timeout(15000)
         self.page.set_default_navigation_timeout(30000)
+
+        # Auto-load named session after browser launch (Phase 2)
+        if self.session_name:
+            try:
+                await self.session_manager.load_session(self.session_name)
+                logger.info(f"Session '{self.session_name}' loaded on startup")
+            except Exception as e:
+                logger.warning(f"Failed to load session '{self.session_name}': {e}")
 
     async def _dismiss_captcha_iframe(self):
         """BUG-02 fix: Detect and auto-dismiss CAPTCHA/delivery iframes.
@@ -1890,8 +1907,25 @@ class BrowserAgent:
             "screenshot": await self._take_screenshot(),
         }
 
+    # ── Session persistence (Phase 2) ──────────────────────────────────────────
+    async def save_session(self, name: str) -> dict:
+        """Save current browser state as a named session via SessionManager."""
+        return await self.session_manager.save_session(name)
+
+    async def load_session(self, name: str) -> dict:
+        """Restore browser state from a named session via SessionManager."""
+        return await self.session_manager.load_session(name)
+
     async def cleanup(self):
-        """Clean up all resources"""
+        """Clean up all resources. Optionally save session if session_name is set."""
+        # Auto-save session on cleanup if name is set (Phase 2)
+        if self.session_name and self.active_session_name is None:
+            try:
+                await self.session_manager.save_session(self.session_name)
+                logger.info(f"Session '{self.session_name}' auto-saved on cleanup")
+            except Exception as e:
+                logger.warning(f"Failed to auto-save session '{self.session_name}': {e}")
+
         try:
             if self.page and not self.page.is_closed():
                 await self.page.close()

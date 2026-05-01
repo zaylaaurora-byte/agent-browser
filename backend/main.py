@@ -24,6 +24,7 @@ from browser_agent import BrowserAgent
 # ─── In-memory session store ─────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}
 _session_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+_active_ws_agent: Optional["BrowserAgent"] = None  # currently active WebSocket agent (Phase 2)
 
 
 def _create_session(session_id: str, task: str, url: str, mode: str) -> dict:
@@ -196,6 +197,52 @@ async def get_session(session_id: str):
     return _sessions[session_id]
 
 
+# ─── Named Session Persistence Endpoints (Phase 2) ──────────────────────────
+@app.get("/api/persistent-sessions")
+async def list_persistent_sessions():
+    """List all saved browser sessions (cookies, localStorage, viewport, proxy, UA)."""
+    from session_manager import SessionManager
+    # Dummy agent just for listing
+    class DummyAgent:
+        session_manager = None
+    mgr = SessionManager.__new__(SessionManager)
+    mgr.active_session_name = None
+    sessions = mgr.list_sessions()
+    return {"sessions": sessions}
+
+
+@app.post("/api/persistent-sessions/{name}/save")
+async def save_persistent_session(name: str):
+    """Save current browser state as a named persistent session."""
+    if _active_ws_agent is None:
+        return JSONResponse(status_code=400, content={"error": "No active browser session. Use WebSocket to start a session first."})
+    result = await _active_ws_agent.save_session(name)
+    return result
+
+
+@app.post("/api/persistent-sessions/{name}/load")
+async def load_persistent_session(name: str):
+    """Load a named persistent session into the current browser."""
+    if _active_ws_agent is None:
+        return JSONResponse(status_code=400, content={"error": "No active browser session. Use WebSocket to start a session first."})
+    result = await _active_ws_agent.load_session(name)
+    if "error" in result:
+        return JSONResponse(status_code=404, content=result)
+    return result
+
+
+@app.delete("/api/persistent-sessions/{name}")
+async def delete_persistent_session(name: str):
+    """Delete a named persistent session."""
+    from session_manager import SessionManager
+    class DummyAgent:
+        session_manager = None
+    mgr = SessionManager.__new__(SessionManager)
+    mgr.active_session_name = None
+    result = mgr.delete_session(name)
+    return result
+
+
 @app.post("/api/execute", response_model=TaskResponse)
 async def execute_task(req: TaskRequest):
     """Execute a browser task (non-streaming)."""
@@ -248,6 +295,7 @@ async def execute_task(req: TaskRequest):
 async def websocket_agent(ws: WebSocket):
     """WebSocket for real-time agent interaction. Sessions are tracked server-side."""
     await ws.accept(max_size=10_000_000)
+    global _active_ws_agent
     agent = None
     current_session_id = None
 
@@ -266,9 +314,11 @@ async def websocket_agent(ws: WebSocket):
                     if agent:
                         await agent.cleanup()
                     agent = BrowserAgent(api_key=incoming_key, model_name=incoming_model)
+                    _active_ws_agent = agent
             else:
                 if agent is None:
                     agent = BrowserAgent()
+                    _active_ws_agent = agent
 
             if not task:
                 await ws.send_json({"step": 0, "action": "error", "error": "No task provided", "status": "failed"})
@@ -296,6 +346,7 @@ async def websocket_agent(ws: WebSocket):
     finally:
         if agent:
             await agent.cleanup()
+        _active_ws_agent = None
 
 
 if __name__ == "__main__":
