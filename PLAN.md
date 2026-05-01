@@ -25,11 +25,10 @@ The settings UI lets you configure API key + model + provider, but these are nev
 - This unblocks: changing model mid-session, multi-user API keys, API key in browser UI only
 
 **1.2 Backend Health & Graceful Degradation**
-If MiniMax API is down, the agent returns `ACTION: done(fallback message)` — a very dumb fallback. We should:
-- Catch API errors explicitly and surface them as a step with `status: "failed"` + error message
-- Implement a simple retry with exponential backoff on API calls (3 attempts, 1s → 2s → 4s)
-- Show API errors in the UI activity feed so the user knows what failed
-- Add a `/api/config` GET endpoint that returns current backend config (model, max_steps, etc.)
+- Catch API errors explicitly and surface them as a step with `status: "failed"` + error message ✅
+- Implement a simple retry with exponential backoff on API calls (3 attempts, 1s → 2s → 4s) ✅
+- Show API errors in the UI activity feed so the user knows what failed ✅
+- Add a `/api/config` GET endpoint that returns current backend config (model, max_steps, etc.) ✅ (returns `{"model_name": "...", "max_steps": {...}, "version": "1.0.0"}`)
 
 **1.3 Session Management**
 Currently each WebSocket connection creates a brand-new `BrowserAgent()` instance. There's no:

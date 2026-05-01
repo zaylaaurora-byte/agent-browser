@@ -143,6 +143,16 @@ async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
 
 
+@app.get("/api/config")
+async def get_config():
+    """Return current backend configuration (non-sensitive)."""
+    return {
+        "model_name": os.getenv("AI_MODEL", "MiniMax-M2.7"),
+        "max_steps": {"fast": 12, "standard": 20, "deep": 30},
+        "version": "1.0.0",
+    }
+
+
 @app.get("/api/sessions")
 async def list_sessions(limit: int = 50, status: Optional[str] = None):
     """List recent sessions. Optionally filter by status: running|completed|failed."""
