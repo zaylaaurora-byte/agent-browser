@@ -1075,6 +1075,57 @@ class BrowserAgent:
         
         return text.strip()
 
+    def _clean_answer(self, raw_answer: str) -> str:
+        """Post-process the final answer to remove AI reasoning artifacts.
+        
+        Strips MiniMax thinking tokens and preamble patterns.
+        """
+        import re
+        text = raw_answer.strip()
+        
+        # Remove <think ...>...</think ...> blocks (with closing tag)
+        text = re.sub(r'<think[^>]*>.*?</think[^>]*>', '', text, flags=re.DOTALL)
+        
+        # Remove unclosed <think ...> at start — strip tag + reasoning until first real content
+        # MiniMax often opens <think thinker> but never closes it
+        think_open = re.match(r'<think[^>]*>\s*', text)
+        if think_open:
+            after_tag = text[think_open.end():]
+            # Find where the actual answer content begins — look for:
+            # 1. Numbered list: "1. Something"
+            # 2. The word/answer: "The answer is X" or "Answer: X"  
+            # 3. A direct statement after a double newline
+            answer_start = re.search(
+                r'(?:^|\n\s*)(?=\d+\.\s)|(?:The answer is\s)|(?:^Answer:\s)',
+                after_tag, re.MULTILINE
+            )
+            if answer_start:
+                text = after_tag[answer_start.start():].lstrip()
+            else:
+                # Fallback: look for double-newline (reasoning → answer boundary)
+                nl_break = re.search(r'\n\s*\n', after_tag)
+                if nl_break:
+                    text = after_tag[nl_break.end():]
+                else:
+                    text = after_tag
+        
+        # Remove common preamble patterns  
+        preamble_patterns = [
+            r'^(?:Based on|After|From|By|I (?:can see|see|found|noticed|observed|determined)|Looking at|The page (?:shows|displays|contains|has)|Upon (?:examining|reviewing|scrolling))[^.]*\.\s*',
+            r'^(?:Here (?:are|is)|The (?:following|top|first)|These (?:are|were))[^:]*:\s*',
+        ]
+        for pat in preamble_patterns:
+            text = re.sub(pat, '', text, flags=re.IGNORECASE).strip()
+        
+        # Remove trailing reasoning
+        text = re.sub(r'\s*(?:Let me|I hope|I believe|This should|Hopefully).*$', '', text, flags=re.IGNORECASE).strip()
+        
+        # Truncate to 500 chars
+        if len(text) > 500:
+            text = text[:497] + '...'
+        
+        return text
+
     async def _call_ai(self, task: str, page_content: str) -> tuple[str, float, str]:
         """Call AI model to decide next action.
         Returns (ai_response, duration_ms, model_name).
@@ -1750,7 +1801,7 @@ class BrowserAgent:
                             "ai_reasoning": ai_response,
                             "observation": observation,
                             "screenshot": await self._take_screenshot(),
-                            "answer": answer_val or arg,
+                            "answer": self._clean_answer(answer_val or arg),
                         }
                         return
                     elif result.get("screenshot"):
