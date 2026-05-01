@@ -771,10 +771,14 @@ class BrowserAgent:
         """Get rich structured page content for AI — includes SPA detection, selects, iframes, CAPTCHAs."""
         try:
             # First wait briefly for dynamic content to settle
+            # Use domcontentloaded (fast) + small sleep instead of networkidle
+            # (networkidle waits for ALL network activity — analytics/ads cause it to hang)
             try:
-                await self.page.wait_for_load_state("networkidle", timeout=8000)
+                await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
             except Exception:
                 pass
+            # Brief additional settle time for SPA hydration
+            await asyncio.sleep(1.0)
 
             content = await self.page.evaluate("""() => {
                 const body = document.body;
@@ -1029,6 +1033,45 @@ class BrowserAgent:
             data = {}
         return data
 
+    def _clean_ai_response(self, raw: str) -> str:
+        """Strip extended thinking tokens and artifacts from AI response.
+        
+        MiniMax-M2.7 (and M2.5) may inject thinking/reasoning blocks into
+        the visible content even when thinking_params is set to off.
+        These appear as:
+          - <think_>...</think_> blocks
+          - ⋊...⋉ blocks  
+          - Content before the first ACTION: that is clearly reasoning
+        """
+        import re
+        text = raw.strip()
+        
+        # Remove <think_>...</think_> blocks (MiniMax thinking tag)
+        text = re.sub(r'<think_>[\s\S]*?</think_>', '', text)
+        
+        # Remove any XML-style thinking blocks
+        text = re.sub(r'<thinking>[\s\S]*?</thinking>', '', text, flags=re.IGNORECASE)
+        
+        # Remove Unicode-wrapped thinking blocks (⋀...⋉ or similar)
+        text = re.sub(r'⋀[\s\S]*?⋉', '', text)
+        
+        # Remove <thought> tags
+        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.IGNORECASE)
+        
+        # If the response contains ACTION: lines, strip everything before the first one
+        # (this removes any leaked reasoning that appears before the actions)
+        action_match = re.search(r'ACTION:', text)
+        if action_match and action_match.start() > 0:
+            preamble = text[:action_match.start()].strip()
+            # Only strip if the preamble looks like reasoning (no ACTION, multi-line, or contains reasoning keywords)
+            reasoning_keywords = ['i need to', 'looking at', 'the page', 'i see', 'i should', 
+                                  'let me', 'first,', 'next,', 'i will', 'this appears',
+                                  'based on', 'i can see', 'it seems', 'the task']
+            if any(kw in preamble.lower() for kw in reasoning_keywords):
+                text = text[action_match.start():]
+        
+        return text.strip()
+
     async def _call_ai(self, task: str, page_content: str) -> tuple[str, float, str]:
         """Call AI model to decide next action.
         Returns (ai_response, duration_ms, model_name).
@@ -1072,7 +1115,9 @@ class BrowserAgent:
                 if extra_headers:
                     request_kwargs["extra_headers"] = extra_headers
                 response = client.chat.completions.create(**request_kwargs)
-                ai_response = response.choices[0].message.content.strip()
+                raw_content = response.choices[0].message.content or ""
+                # Strip MiniMax extended thinking tokens that leak into content
+                ai_response = self._clean_ai_response(raw_content)
                 self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
                 self.conversation_history.append({"role": "assistant", "content": ai_response})
                 if len(self.conversation_history) > 6:
@@ -1547,6 +1592,7 @@ class BrowserAgent:
             # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
             await self._dismiss_captcha_iframe()
             captcha_wait_count = 0   # BUG-05 fix: track consecutive wait()s for CAPTCHA loops
+            consecutive_failures = 0  # Track consecutive step failures — bail after 3
             steps_executed += 1
             nav_ms = int((time.monotonic() - nav_start) * 1000)
             yield {
@@ -1685,6 +1731,7 @@ class BrowserAgent:
                             return
                     else:
                         captcha_wait_count = 0   # reset on non-wait action
+                    consecutive_failures = 0  # Reset — this step succeeded
                     steps_executed += 1
 
                     if action == "done":
@@ -1737,6 +1784,22 @@ class BrowserAgent:
                             result = retry_result
 
                     if not retry_success:
+                        consecutive_failures += 1
+                        if consecutive_failures >= 3:
+                            yield {
+                                "step": step_num,
+                                "action": "done",
+                                "argument": f"Stopping after {consecutive_failures} consecutive failures. The site may be blocking automation.",
+                                "status": "completed",
+                                "url": self.page.url if self.page else page_url,
+                                "page_title": await self.page.title() if self.page else page_title_val,
+                                "duration_ms": exec_ms,
+                                "model": model_name, "engine": self._browser_engine,
+                                "observation": f"Bailed after {consecutive_failures} consecutive failures.",
+                                "screenshot": await self._take_screenshot(),
+                                "answer": f"Could not complete task — {consecutive_failures} consecutive action failures. The site may have bot protection or complex interactive elements.",
+                            }
+                            return
                         yield {
                             "step": step_num,
                             "action": "error",
