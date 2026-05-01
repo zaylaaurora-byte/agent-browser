@@ -296,3 +296,39 @@ Currently only runs locally via Playwright. Add cloud browser options:
 - Provider selector (MiniMax / OpenAI / Anthropic / Ollama) with model dropdown
 - "Test Connection" button hits `GET /api/health` and shows status
 - API key + model name sent on every execute (per Phase 1 fix, now also using configurable URL
+
+## Complex Site Robustness — Session 2026-05-01 ✅
+
+**Problems Found on Complex Websites (8 issues)**
+
+- [x] **BUG-11: MiniMax thinking tokens leak into answer** — MiniMax-M2.7 always emits `<think thinker>...</think thinker>` blocks even with `X-MiniMax-Thinking: off` header. Fixed by adding `_clean_ai_response()` to strip thinking blocks from AI response before action parsing, and `_clean_answer()` to strip them from the final answer output.
+- [x] **BUG-12: Answer contains AI reasoning preamble** — MiniMax puts "Based on scrolling..." / "I can see..." / "Looking at..." before actual answers. Fixed with preamble pattern stripping in `_clean_answer()`.
+- [x] **BUG-13: Infinite step loop on complex pages** — Wikipedia caused 50+ scroll/re-plan cycles. Fixed by: (1) mode-based step limits (fast=12, standard=20, deep=30), (2) hard cap on total actions (4x step limit), (3) consecutive failure bail-out after 3 failures.
+- [x] **BUG-14: `networkidle` hangs on content-heavy pages** — Wikipedia analytics pings prevented `networkidle` from ever resolving (120s+ hangs). Fixed by switching to `domcontentloaded` + 1s sleep.
+- [x] **BUG-15: No login wall detection** — Agent would keep trying actions on auth-required pages. Fixed by detecting login/auth URL patterns and email+password field combos.
+- [x] **BUG-16: Single popup dismissal insufficient** — Complex sites show multiple sequential popups. Fixed with per-step popup dismissal check.
+- [x] **BUG-17: Navigation failures kill the run** — Single nav failure terminated the agent. Fixed with navigation retry + fallback strategy.
+- [x] **BUG-18: `[TOOL_CALL]` artifacts in answer** — MiniMax sometimes emits tool-call formatted text. Fixed with regex cleanup in `_clean_answer()`.
+
+**Upgrades Applied**
+
+- System prompt upgraded from 44 lines to 110+ lines covering: popups, overlays, SPA loading, login walls, infinite scroll, CAPTCHAs, dynamic content, cookie banners
+- Content limits raised: page content 1200→3000 chars, text extraction 2000→4000 chars, interactive elements 30→60
+- Answer quality rules added to prompt: "CONCISE and DIRECT" with examples of good/bad answers
+- Consecutive failure tracking: agent bails after 3 consecutive action failures with clear error message
+- Total action hard cap prevents infinite loops even with batched multi-action steps
+
+**Test Results (2026-05-01)**
+
+| Site | Status | Steps | Fails | Answer Quality |
+|------|--------|-------|-------|---------------|
+| httpbin Form | ✅ completed | 7 | 1 | ✅ Clean — form submitted |
+| Hacker News | ✅ completed | 2 | 0 | ✅ Clean — headlines listed |
+| GitHub Trending | ✅ completed | 2 | 0 | ✅ Clean |
+| Wikipedia AI | ✅ completed | 7 | 1 | ✅ Clean — sections listed |
+| Reddit | ✅ completed | 3 | 0 | ✅ Clean (detected CAPTCHA) |
+| Booking.com | ⏳ needs retry | - | - | Heavy SPA, needs longer timeout |
+
+**Files Modified**
+- `backend/browser_agent.py` — 8 bug fixes, 2 new methods (_clean_ai_response, _clean_answer), consecutive failure tracking, total action cap
+- `backend/prompts/system.md` — full rewrite for complex site handling + answer quality rules

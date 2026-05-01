@@ -1120,6 +1120,10 @@ class BrowserAgent:
         # Remove trailing reasoning
         text = re.sub(r'\s*(?:Let me|I hope|I believe|This should|Hopefully).*$', '', text, flags=re.IGNORECASE).strip()
         
+        # Remove tool call artifacts (MiniMax sometimes emits [TOOL_CALL] blocks)
+        text = re.sub(r'\[TOOL_CALL\]\s*\{[^}]*\}', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'\[TOOL_CALL\]', '', text).strip()
+        
         # Truncate to 500 chars
         if len(text) > 500:
             text = text[:497] + '...'
@@ -1631,6 +1635,7 @@ class BrowserAgent:
         # Mode-based step limits
         mode_limits = {"fast": 12, "standard": 20, "deep": 30}
         max_steps = mode_limits.get(mode.lower(), mode_limits.get("fast", 15))
+        max_total_actions = max_steps * 4  # Hard cap on total actions (each step can have multiple batched actions)
 
         # Navigate to start
         nav_start = time.monotonic()
@@ -1740,6 +1745,20 @@ class BrowserAgent:
 
             # Execute all actions in sequence
             for batch_idx, (action, arg) in enumerate(all_actions):
+                # Hard cap: stop if total actions exceed limit
+                if steps_executed >= max_total_actions:
+                    yield {
+                        "step": step_num, "action": "done",
+                        "argument": f"Reached total action limit ({max_total_actions}). Task may need more steps.",
+                        "status": "completed",
+                        "url": self.page.url if self.page else page_url,
+                        "page_title": await self.page.title() if self.page else page_title_val,
+                        "duration_ms": 0, "model": model_name, "engine": self._browser_engine,
+                        "observation": f"Action limit reached after {steps_executed} total actions.",
+                        "screenshot": await self._take_screenshot(),
+                        "answer": f"Task incomplete — reached action limit ({max_total_actions}). The page was too complex for the allowed steps.",
+                    }
+                    return
                 exec_start = time.monotonic()
 
                 # BUG-02 fix: before EVERY action, check for CAPTCHA iframes and dismiss.
