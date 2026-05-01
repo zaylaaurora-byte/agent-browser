@@ -19,17 +19,18 @@ export interface Step {
 }
 
 export const ACTION_CONFIG: Record<string, { icon: string; color: string }> = {
-  navigate:  { icon: "Globe",      color: "text-blue-400"   },
-  click:     { icon: "MousePointer", color: "text-amber-400"  },
-  type:      { icon: "Type",       color: "text-emerald-400" },
-  scroll:    { icon: "ScrollText", color: "text-zinc-400"    },
-  wait:      { icon: "Timer",      color: "text-zinc-400"    },
-  screenshot:{ icon: "Camera",     color: "text-pink-400"    },
-  done:      { icon: "CheckCircle2", color: "text-emerald-400" },
-  error:     { icon: "AlertCircle", color: "text-red-400"    },
-  check:     { icon: "CheckCircle2", color: "text-cyan-400"  },
-  submit:    { icon: "Rocket",     color: "text-violet-400"  },
-  thinking:  { icon: "Brain",      color: "text-violet-400"  },
+  navigate:   { icon: "Globe",       color: "text-blue-400"    },
+  click:      { icon: "MousePointer", color: "text-amber-400"   },
+  type:       { icon: "Type",        color: "text-emerald-400" },
+  scroll:     { icon: "ScrollText",  color: "text-zinc-400"    },
+  wait:       { icon: "Timer",       color: "text-zinc-400"    },
+  screenshot: { icon: "Camera",      color: "text-pink-400"    },
+  done:       { icon: "CheckCircle2",color: "text-emerald-400" },
+  error:      { icon: "AlertCircle", color: "text-red-400"     },
+  check:      { icon: "CheckCircle2",color: "text-cyan-400"    },
+  submit:     { icon: "Rocket",      color: "text-violet-400"  },
+  thinking:   { icon: "Brain",       color: "text-violet-400"  },
+  paused:     { icon: "Pause",      color: "text-amber-400"   },
 };
 
 export const MODE_STYLES: Record<Mode, { label: string; color: string; border: string; bg: string }> = {

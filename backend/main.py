@@ -20,11 +20,19 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from browser_agent import BrowserAgent
+from mcp_server import create_mcp_server, set_agent
+from credential_vault import CredentialVault, VAULT_AUDIT_FILE
+
+vault = CredentialVault()
 
 # ─── In-memory session store ─────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}
 _session_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 _active_ws_agent: Optional["BrowserAgent"] = None  # currently active WebSocket agent (Phase 2)
+
+# ─── Supervisor state ──────────────────────────────────────────────────────────
+_agent_paused = False
+_agent_running_session: Optional[str] = None
 
 
 def _create_session(session_id: str, task: str, url: str, mode: str) -> dict:
@@ -100,6 +108,8 @@ async def _periodic_cleanup():
 async def lifespan(app: FastAPI):
     logger.info("🚀 Agent Browser API starting...")
     cleanup_task = asyncio.create_task(_periodic_cleanup())
+    # Initialize MCP server with no agent — will be attached on first WebSocket connection
+    create_mcp_server(None)
     yield
     cleanup_task.cancel()
     try:
@@ -136,6 +146,14 @@ class TaskResponse(BaseModel):
     steps_executed: int = 0
     steps_failed: int = 0
     screenshot: Optional[str] = None
+
+
+class CredentialAdd(BaseModel):
+    domain: str
+    username: str
+    password: str
+    totp_secret: Optional[str] = None
+    label: Optional[str] = None
 
 
 # ─── REST Endpoints ──────────────────────────────────────────────────────────
@@ -290,6 +308,185 @@ async def execute_task(req: TaskRequest):
         await agent.cleanup()
 
 
+# ─── Supervisor Endpoints ───────────────────────────────────────────────────────
+@app.post("/api/supervisor/pause")
+async def pause_agent():
+    """Pause the currently running agent (stops after current step)."""
+    global _agent_paused
+    _agent_paused = True
+    return {"paused": True}
+
+
+@app.post("/api/supervisor/resume")
+async def resume_agent():
+    """Resume a paused agent."""
+    global _agent_paused
+    _agent_paused = False
+    return {"resumed": True}
+
+
+@app.get("/api/supervisor/status")
+async def agent_status():
+    """Get current agent state."""
+    return {"paused": _agent_paused, "session": _agent_running_session}
+
+
+@app.post("/api/history/undo")
+async def undo_last_action():
+    """Undo the last undoable browser action."""
+    if _active_ws_agent and hasattr(_active_ws_agent, 'action_history'):
+        return await _active_ws_agent.undo_last_action()
+    return {"error": "No active agent"}
+
+
+@app.get("/api/history")
+async def get_action_history(limit: int = 50):
+    """Get action history (last N actions)."""
+    if _active_ws_agent and hasattr(_active_ws_agent, 'action_history'):
+        return {"history": _active_ws_agent.action_history.get_history(limit)}
+    return {"history": []}
+
+
+@app.get("/api/history/snapshot")
+async def get_last_snapshot():
+    """Get the most recent undo snapshot."""
+    if _active_ws_agent and hasattr(_active_ws_agent, 'action_history'):
+        snap = _active_ws_agent.action_history.get_last_snapshot()
+        return snap if snap else {"error": "No snapshot"}
+    return {"error": "No active agent"}
+
+
+# ─── Credential Vault Endpoints (Phase 5) ─────────────────────────────────────
+@app.get("/api/vault/domains")
+async def list_vault_domains():
+    """List all domains with stored credentials."""
+    return {"domains": vault.list_domains()}
+
+
+@app.get("/api/vault/credential/{domain}")
+async def get_vault_credential(domain: str):
+    """Get credential metadata (without password) for a domain. Returns labels/usernames only."""
+    return vault.get_credential(domain)
+
+
+@app.post("/api/vault/credential")
+async def add_vault_credential(cred: CredentialAdd):
+    """Add a credential for a domain."""
+    return vault.add_credential(cred.domain, cred.username, cred.password, cred.totp_secret, cred.label)
+
+
+@app.post("/api/vault/fill/{domain}")
+async def fill_vault_credential(domain: str):
+    """
+    Blind fill — returns actual credential for page form injection.
+    NEVER returns password to AI — only to the form filler.
+    """
+    return vault.fill_credential(domain)
+
+
+@app.delete("/api/vault/credential/{credential_id}")
+async def delete_vault_credential(credential_id: str):
+    """Delete a credential by ID."""
+    return vault.delete_credential(credential_id)
+
+
+@app.get("/api/vault/audit")
+async def get_vault_audit():
+    """Get the last 50 audit log entries."""
+    if not VAULT_AUDIT_FILE.exists():
+        return {"audit": []}
+    return {"audit": VAULT_AUDIT_FILE.read_text().splitlines()[-50:]}
+
+
+# ─── MCP HTTP/SSE Endpoints (Phase 4) ───────────────────────────────────────
+# These expose the same browser control tools over HTTP+SSE so Hermes Agent
+# and other HTTP-based MCP clients can drive the browser.
+
+@app.get("/mcp")
+async def mcp_sse(request: Request):
+    """
+    SSE stream for long-lived MCP tool sessions.
+    GET /mcp upgrades to an SSE connection that receives tool results.
+    POST /mcp accepts one-shot tool calls and returns results immediately.
+    """
+    from fastapi.responses import JSONResponse
+    from sse_starlette.sse import EventSourceResponse
+
+    # One-shot tool call via query params or POST body
+    tool_name = request.query_params.get("tool")
+    if tool_name:
+        args_str = request.query_params.get("args", "{}")
+        try:
+            import json as _json
+            arguments = _json.loads(args_str) if args_str != "{}" else {}
+        except Exception:
+            arguments = {}
+
+        if _active_ws_agent is None:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No active browser session. Start one via the WebSocket endpoint first."},
+            )
+
+        from mcp_server import _TOOL_HANDLERS
+        handler = _TOOL_HANDLERS.get(tool_name)
+        if handler is None:
+            return JSONResponse(status_code=400, content={"error": f"Unknown tool: {tool_name}"})
+
+        try:
+            results = await handler(_active_ws_agent, arguments)
+            # Convert TextContent to dict
+            content = [{"type": r.type, "text": r.text} for r in results]
+            return JSONResponse(content={"results": content})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": str(e)})
+
+    # Long-lived SSE connection — send periodic pings
+    async def event_puller():
+        import asyncio as _asyncio
+        while True:
+            yield {"event": "ping", "data": "connected"}
+            await _asyncio.sleep(30)
+
+    return EventSourceResponse(event_puller())
+
+
+@app.post("/mcp")
+async def mcp_post(request: Request):
+    """One-shot MCP tool call over HTTP POST."""
+    from fastapi.responses import JSONResponse
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+
+    tool_name = body.get("tool")
+    arguments = body.get("arguments", {})
+
+    if not tool_name:
+        return JSONResponse(status_code=400, content={"error": "Missing 'tool' field"})
+
+    if _active_ws_agent is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No active browser session. Start one via the WebSocket endpoint first."},
+        )
+
+    from mcp_server import _TOOL_HANDLERS
+    handler = _TOOL_HANDLERS.get(tool_name)
+    if handler is None:
+        return JSONResponse(status_code=400, content={"error": f"Unknown tool: {tool_name}"})
+
+    try:
+        results = await handler(_active_ws_agent, arguments)
+        content = [{"type": r.type, "text": r.text} for r in results]
+        return JSONResponse(content={"results": content})
+    except Exception as e:
+        logger.error(f"MCP tool {tool_name} failed: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 # ─── WebSocket Endpoint ──────────────────────────────────────────────────────
 @app.websocket("/ws/agent")
 async def websocket_agent(ws: WebSocket):
@@ -315,10 +512,12 @@ async def websocket_agent(ws: WebSocket):
                         await agent.cleanup()
                     agent = BrowserAgent(api_key=incoming_key, model_name=incoming_model)
                     _active_ws_agent = agent
+                    set_agent(agent)
             else:
                 if agent is None:
                     agent = BrowserAgent()
                     _active_ws_agent = agent
+                    set_agent(agent)
 
             if not task:
                 await ws.send_json({"step": 0, "action": "error", "error": "No task provided", "status": "failed"})
@@ -328,9 +527,24 @@ async def websocket_agent(ws: WebSocket):
             current_session_id = f"session_{int(datetime.utcnow().timestamp())}"
             _sessions[current_session_id] = _create_session(current_session_id, task, url, mode)
 
+            global _agent_running_session
+            _agent_running_session = current_session_id
+
             async for step in agent.stream_execute(task, url, mode):
                 _update_session(current_session_id, step)
                 await ws.send_json(step)
+                # Check pause signal — yield a paused step and stop iteration
+                if _agent_paused:
+                    paused_step = {
+                        "step": step.get("step", 0) + 1,
+                        "action": "paused",
+                        "status": "paused",
+                        "observation": "Agent paused by supervisor",
+                        "timestamp": datetime.utcnow().timestamp(),
+                    }
+                    _update_session(current_session_id, paused_step)
+                    await ws.send_json(paused_step)
+                    break
 
     except WebSocketDisconnect:
         # Mark session as stopped if it was running
@@ -347,6 +561,7 @@ async def websocket_agent(ws: WebSocket):
         if agent:
             await agent.cleanup()
         _active_ws_agent = None
+        _agent_running_session = None
 
 
 if __name__ == "__main__":

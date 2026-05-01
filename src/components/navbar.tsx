@@ -3,11 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Globe, Settings, Menu, X } from "lucide-react";
+import { Globe, Settings, Menu, X, Activity } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const NAV_LINKS = [
-  { href: "/",         label: "Dashboard", icon: Globe    },
+  { href: "/",          label: "Dashboard", icon: Globe    },
+  { href: "/supervisor", label: "Supervisor", icon: Activity },
   { href: "/settings", label: "Settings",  icon: Settings },
 ];
 

@@ -21,6 +21,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
   check:      CheckCircle2,
   submit:     Rocket,
   thinking:   Brain,
+  paused:     Timer,
 };
 
 const COLOR_MAP: Record<string, string> = {
@@ -35,15 +36,17 @@ const COLOR_MAP: Record<string, string> = {
   check:      "text-cyan-400",
   submit:     "text-violet-400",
   thinking:   "text-violet-400",
+  paused:     "text-amber-400",
 };
 
 const BG_MAP: Record<string, string> = {
-  done:    "bg-emerald-500/12",
-  error:   "bg-red-500/12",
-  submit:  "bg-violet-500/12",
-  navigate:"bg-sky-500/10",
-  click:   "bg-amber-500/10",
-  type:    "bg-emerald-500/10",
+  done:      "bg-emerald-500/12",
+  error:     "bg-red-500/12",
+  submit:    "bg-violet-500/12",
+  navigate:  "bg-sky-500/10",
+  click:     "bg-amber-500/10",
+  type:      "bg-emerald-500/10",
+  paused:    "bg-amber-500/10",
 };
 
 interface Props {

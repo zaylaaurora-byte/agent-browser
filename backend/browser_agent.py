@@ -14,6 +14,7 @@ from datetime import datetime
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 from proxy_manager import ProxyManager
+from action_history import ActionHistory
 
 logger = logging.getLogger(__name__)
 
@@ -401,6 +402,9 @@ class BrowserAgent:
             proxy_url=proxy_url,
             rotate_every=proxy_rotate_every,
         )
+
+        # Action history + undo (Phase 6)
+        self.action_history = ActionHistory(self)
 
     def _build_ai_messages(self, task: str, page_content: str, screenshot_b64: str = None) -> list:
         """Build messages for AI including conversation history and optional screenshot for vision."""
@@ -1379,13 +1383,16 @@ class BrowserAgent:
 
         try:
             if action == "navigate":
+                await self.action_history.capture_snapshot(action)
                 url = arg if arg.startswith("http") else f"https://{arg}"
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await self._human_delay(0.5, 1.5)
                 result["success"] = True
                 result["url"] = self.page.url
+                self.action_history.record_action(action, {"url": arg}, "completed", "navigated")
 
             elif action == "click":
+                await self.action_history.capture_snapshot(action)
                 # Move mouse naturally to element before clicking
                 try:
                     el = await self.page.query_selector(arg)
@@ -1429,8 +1436,13 @@ class BrowserAgent:
                         except:
                             result["error"] = f"Click failed for '{arg}': {str(e)[:80]}"
                             result["success"] = False
+                if result["success"]:
+                    self.action_history.record_action("click", {"selector": arg}, "completed", "clicked")
+                else:
+                    self.action_history.record_action("click", {"selector": arg}, "failed", result.get("error", "unknown"))
 
             elif action == "type":
+                await self.action_history.capture_snapshot(action)
                 parts = arg.split(",", 1)
                 if len(parts) == 2:
                     selector, text = parts[0].strip(), parts[1].strip()
@@ -1444,23 +1456,29 @@ class BrowserAgent:
                         await self.page.fill(selector, text, no_wait_after=True)
                     await self._human_delay(0.15, 0.4)
                     result["success"] = True
+                    self.action_history.record_action("type", {"selector": selector, "text": text[:50]}, "completed", "typed")
                 else:
                     result["error"] = "Invalid type format: use selector, text"
+                    self.action_history.record_action("type", {"arg": arg}, "failed", result["error"])
 
             elif action == "check":
+                await self.action_history.capture_snapshot(action)
                 try:
                     # no_wait_after to avoid hanging on elements that don't trigger network changes
                     await self.page.check(arg, timeout=5000, no_wait_after=True)
                     await self._human_delay(0.1, 0.3)
                     result["success"] = True
+                    self.action_history.record_action("check", {"selector": arg}, "completed", "checked")
                 except Exception as e:
                     try:
                         await self.page.click(arg, timeout=5000)
                         await self._human_delay(0.1, 0.3)
                         result["success"] = True
+                        self.action_history.record_action("check", {"selector": arg}, "completed", "checked_via_click")
                     except:
                         result["error"] = f"Check failed for '{arg}': {str(e)[:80]}"
                         result["success"] = False
+                        self.action_history.record_action("check", {"selector": arg}, "failed", result["error"])
 
             elif action == "select":
                 # Proper <select> interaction — open dropdown then pick option by text
@@ -1493,6 +1511,7 @@ class BrowserAgent:
                         result["error"] = f"select failed: {str(e)[:80]}"
 
             elif action == "select_option":
+                await self.action_history.capture_snapshot(action)
                 # arg format: "selector, value"
                 parts = arg.rsplit(",", 1)
                 if len(parts) == 2:
@@ -1504,28 +1523,38 @@ class BrowserAgent:
                             await el.select_option(value)
                             await self._human_delay(0.1, 0.3)
                             result["success"] = True
+                            self.action_history.record_action("select_option", {"selector": selector, "value": value}, "completed", "selected")
                         else:
                             result["error"] = f"No <select> found at {selector}"
+                            self.action_history.record_action("select_option", {"arg": arg}, "failed", result["error"])
                     except Exception as e:
                         result["error"] = f"select_option failed: {str(e)[:80]}"
+                        self.action_history.record_action("select_option", {"arg": arg}, "failed", result["error"])
                 else:
                     result["error"] = "Invalid select_option format: use selector, value"
+                    self.action_history.record_action("select_option", {"arg": arg}, "failed", result["error"])
 
             elif action == "hover":
+                await self.action_history.capture_snapshot(action)
                 try:
                     await self.page.hover(arg, timeout=5000)
                     await self._human_delay(0.2, 0.5)
                     result["success"] = True
+                    self.action_history.record_action("hover", {"selector": arg}, "completed", "hovered")
                 except Exception as e:
                     result["error"] = f"Hover failed: {str(e)[:80]}"
+                    self.action_history.record_action("hover", {"selector": arg}, "failed", result["error"])
 
             elif action == "dblclick":
+                await self.action_history.capture_snapshot(action)
                 try:
                     await self.page.dblclick(arg, timeout=5000)
                     await self._human_delay(0.3, 0.8)
                     result["success"] = True
+                    self.action_history.record_action("dblclick", {"selector": arg}, "completed", "dblclicked")
                 except Exception as e:
                     result["error"] = f"dblclick failed: {str(e)[:80]}"
+                    self.action_history.record_action("dblclick", {"selector": arg}, "failed", result["error"])
 
             elif action == "switch_to_tab":
                 try:
@@ -1562,6 +1591,7 @@ class BrowserAgent:
                     result["error"] = f"evaluate failed: {str(e)[:80]}"
 
             elif action == "submit":
+                await self.action_history.capture_snapshot(action)
                 # Use a short wait so we don't hang waiting for a POST response
                 # that doesn't navigate anywhere (e.g. httpbin.org/post)
                 try:
@@ -1577,13 +1607,16 @@ class BrowserAgent:
                         pass
                 await self._human_delay(0.5, 1.5)
                 result["success"] = True
+                self.action_history.record_action("submit", {"selector": arg}, "completed", "submitted")
 
             elif action == "scroll":
+                await self.action_history.capture_snapshot(action)
                 amount = random.randint(300, 700)
                 direction = amount if arg == "down" else -amount
                 await self.page.mouse.wheel(0, direction)
                 await self._human_delay(0.3, 0.8)
                 result["success"] = True
+                self.action_history.record_action("scroll", {"direction": arg}, "completed", "scrolled")
 
             elif action == "wait":
                 seconds = min(float(arg), 10)
@@ -1602,6 +1635,10 @@ class BrowserAgent:
             result["error"] = str(e)[:200]
 
         return result
+
+    async def undo_last_action(self) -> dict:
+        """Public method: undo the last undoable browser action."""
+        return await self.action_history.undo_last()
 
     async def _take_screenshot(self) -> str:
         """Take screenshot and return base64 (JPEG, max ~200KB to fit WebSocket frame limits)"""
@@ -1915,6 +1952,18 @@ class BrowserAgent:
     async def load_session(self, name: str) -> dict:
         """Restore browser state from a named session via SessionManager."""
         return await self.session_manager.load_session(name)
+
+    # ── Credential Vault (Phase 5) ────────────────────────────────────────────
+    async def fill_from_vault(self, domain: str) -> Optional[dict]:
+        """
+        Use vault credential to fill login form. Called by MCP tools.
+        Returns username + password + TOTP for direct page injection.
+        """
+        import requests
+        resp = requests.post(f"http://localhost:8001/api/vault/fill/{domain}")
+        if resp.status_code == 200:
+            return resp.json()
+        return None
 
     async def cleanup(self):
         """Clean up all resources. Optionally save session if session_name is set."""
