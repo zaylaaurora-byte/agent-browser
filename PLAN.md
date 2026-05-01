@@ -242,7 +242,7 @@ Currently only runs locally via Playwright. Add cloud browser options:
 - [ ] No TypeScript strict mode — add `strict: true` to `tsconfig.json` and fix all `any` types
 - [ ] No unit tests anywhere. Minimum: test `_parse_action()` regex, `_call_ai()` with mock, `_execute_action()` with Playwright mock.
 - [ ] Celery is in `requirements.txt` but unused — either remove it or wire up scheduling
-- [ ] `browser_agent.py` SYSTEM_PROMPT is hardcoded at the top of the file. Should be in `prompts/` directory as `.md` files for easy editing.
+- [x] `browser_agent.py` SYSTEM_PROMPT is hardcoded at the top of the file. Moved to `backend/prompts/system.md` for easy editing.
 - [ ] No rate limiting on `/api/execute` — a user can spam it and burn through API credits
 - [ ] Screenshots are base64 strings in WebSocket frames — very large payloads, can cause browser memory issues on long runs (50+ steps)
 - [ ] `main.py` has a dead `celery` import reference (if Celery is configured later)
