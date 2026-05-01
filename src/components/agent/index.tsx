@@ -203,7 +203,7 @@ export function AgentBrowser() {
         </div>
 
         {/* Main grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 lg:gap-5">
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4 lg:gap-5 pb-24 xl:pb-0">
 
           {/* Left */}
           <div className={`space-y-4 ${mobileTab === "activity" ? "hidden xl:block" : ""}`}>

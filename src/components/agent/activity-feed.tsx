@@ -68,7 +68,7 @@ export function ActivityFeed({
       initial={{ opacity: 0, x: 14 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.38, delay: 0.14, ease: [0.16, 1, 0.3, 1] }}
-      className="glass-card rounded-2xl overflow-hidden flex flex-col xl:h-[calc(100vh-120px)] xl:sticky xl:top-20"
+      className="glass-card rounded-2xl overflow-hidden flex flex-col flex-1 xl:flex-none xl:h-[calc(100vh-120px)] xl:sticky xl:top-20"
     >
       {/* Header */}
       <div className="panel-header flex-shrink-0">
