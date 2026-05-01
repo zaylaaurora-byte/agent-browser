@@ -14,7 +14,7 @@ from typing import Optional
 from contextlib import asynccontextmanager
 from collections import defaultdict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -144,12 +144,18 @@ async def health():
 
 
 @app.get("/api/config")
-async def get_config():
+async def get_config(request: Request):
     """Return current backend configuration (non-sensitive)."""
+    # Auto-detect accessible URL from Host header (works for mobile on LAN)
+    host = request.headers.get("host", "localhost:8001")
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    backend_url = f"{scheme}://{host}"
     return {
         "model_name": os.getenv("AI_MODEL", "MiniMax-M2.7"),
         "max_steps": {"fast": 12, "standard": 20, "deep": 30},
         "version": "1.0.0",
+        "backend_url": backend_url,
+        "ws_url": backend_url.replace("http", "ws") + "/ws/agent",
     }
 
 

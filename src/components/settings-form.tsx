@@ -68,17 +68,35 @@ export function SettingsForm() {
   const [saved, setSaved] = useState(false);
   const [wsStatus, setWsStatus] = useState<"connected" | "disconnected">("disconnected");
 
-  // Load from localStorage
+  // Auto-detect backend URL from /api/config on mount
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("agent-browser-settings");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+    const detectBackend = async () => {
+      try {
+        // Try relative first (works if on same host), then fall back to common ports
+        const urls = [
+          "/api/config",
+          "http://localhost:8001/api/config",
+          "http://192.168.0.209:8001/api/config",
+        ];
+        for (const url of urls) {
+          try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+            if (res.ok) {
+              const cfg = await res.json();
+              if (cfg.backend_url) {
+                setSettings((s) => ({ ...s, backendUrl: cfg.backend_url }));
+                return;
+              }
+            }
+          } catch {
+            // try next
+          }
+        }
+      } catch {
+        // keep default
       }
-    } catch {
-      // ignore
-    }
+    };
+    detectBackend();
   }, []);
 
   // Check WebSocket connection
