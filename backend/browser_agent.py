@@ -320,21 +320,6 @@ class BrowserAgent:
         captcha = data.get("captcha")
         if captcha:
             warnings.append(f"⚠ CAPTCHA DETECTED: {captcha}")
-        cookie_banner = data.get("cookie_banner")
-        cookie_banner_text = data.get("cookie_banner_text")
-        if cookie_banner:
-            banner_msg = f"⚠ COOKIE BANNER: {cookie_banner}"
-            if cookie_banner_text:
-                banner_msg += f" | Content: {cookie_banner_text}"
-            warnings.append(banner_msg)
-        popup_dialog = data.get("popup_dialog")
-        if popup_dialog:
-            warnings.append(
-                f"⚠ POPUP/DIALOG BLOCKING PAGE: '{popup_dialog.get('heading','')}' — "
-                f"Body: {popup_dialog.get('body','')[:200]}. "
-                f"Selector: {popup_dialog.get('selector','')}. "
-                f"ACTION REQUIRED: Click the accept/agree/dismiss button inside this popup first."
-            )
         iframe_count = data.get("iframe_count", 0)
         if iframe_count > 0:
             warnings.append(f"ℹ {iframe_count} iframe(s) on page")
@@ -506,137 +491,6 @@ class BrowserAgent:
             logger.warning(f"CAPTCHA iframe check failed: {e}")
             return None
 
-    async def _dismiss_cookie_banner(self):
-        """Auto-dismiss common cookie consent banners and YouTube GDPR consent page"""
-        try:
-            # ── YouTube / Google consent page — wait for element then dismiss ─────
-            page_url = self.page.url if self.page else ""
-            is_youtube_consent = (
-                "consent.youtube.com" in page_url or
-                "consent.google.com" in page_url or
-                page_url.startswith("https://www.youtube.com") or
-                page_url.startswith("https://youtube.com")
-            )
-            if is_youtube_consent:
-                yt_consent_selectors = [
-                    "[aria-label='Accept all']",
-                    "[aria-label='Accept all cookies']",
-                    "[aria-label='I agree']",
-                    "button[type='submit']",
-                    "[data-action='save']",
-                    "button[aria-label*='accept']",
-                    "button[aria-label*='Accept']",
-                    "button[id*='accept']",
-                    "button[id*='agree']",
-                    "button[aria-label='Confirm your settings']",
-                ]
-                for selector in yt_consent_selectors:
-                    try:
-                        elem = await asyncio.wait_for(
-                            self.page.query_selector(selector), timeout=5.0
-                        )
-                        if elem and await elem.is_visible(timeout=2000):
-                            await elem.click(timeout=3000)
-                            await self._human_delay(0.5, 1.0)
-                            logger.info(f"YouTube consent dismissed with: {selector}")
-                            return
-                    except (asyncio.TimeoutError, Exception):
-                        continue
-                # Fallback: click any button with "accept" text
-                try:
-                    buttons = await self.page.query_selector_all("button")
-                    for btn in buttons:
-                        try:
-                            txt = await btn.text_content()
-                            if txt and "accept" in txt.lower():
-                                if await btn.is_visible(timeout=1000):
-                                    await btn.click(timeout=2000)
-                                    await self._human_delay(0.5, 1.0)
-                                    logger.info(f"YouTube consent dismissed (text): {txt.strip()}")
-                                    return
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
-                # Last fallback: press Enter
-                try:
-                    await self.page.keyboard.press("Enter")
-                    await self._human_delay(0.5, 1.0)
-                    logger.info("YouTube consent dismissed with Enter")
-                    return
-                except Exception:
-                    pass
-                return
-
-            await asyncio.sleep(0.5)
-            cookie_selectors = [
-                "[aria-label='Accept all cookies']",
-                "[aria-label='Accept cookies']",
-                "[aria-label='Accept']",
-                "[aria-label='Agree']",
-                "[aria-label='Allow cookies']",
-                "[aria-label='Allow all']",
-                "[aria-label='Reject all']",
-                "[aria-label='Decline all']",
-                "[aria-label='Decline cookies']",
-                "[aria-label='Dismiss']",
-                "[aria-label='Close']",
-                "[title='Accept']",
-                "[title='Accept all']",
-                "[title='Agree']",
-                "[title='Allow']",
-                "[title='Allow all']",
-                "[title='Reject']",
-                "[title='Decline']",
-                "[title='Dismiss']",
-                "[id*='cookie'][aria-label*='accept']",
-                "[id*='cookie'][aria-label*='Accept']",
-                "[id*='consent'] button",
-                "[class*='cookie'] button",
-                "[class*='Cookie'] button",
-                "[id*='cookie-consent']",
-                "[id*='CookieConsent']",
-                "[class*='cookie-consent']",
-                "[class*='CookieConsent']",
-                "[id*='gdpr']",
-                "[class*='gdpr']",
-                "[id*='privacy-consent']",
-                "[class*='privacy-consent']",
-                "button[title='Accept all']",
-                "button[title='Accept']",
-                "button:text('Accept')",
-                "button:text('Accept all')",
-                "button:text('Accept all cookies')",
-                "button:text('Accept cookies')",
-                "button:text('Allow')",
-                "button:text('Allow all')",
-                "button:text('Agree')",
-                "button:text('Decline')",
-                "button:text('Reject')",
-                "button:text('Reject all')",
-                "button:text('Dismiss')",
-                "button:text('Continue')",
-                "button:text('Got it')",
-                "button:text('I agree')",
-                "input[value='Accept']",
-                "input[value='Accept all']",
-                "input[value='Allow']",
-                "input[value='Agree']",
-                "a[aria-label*='accept']",
-                "a[aria-label*='Accept']",
-            ]
-            for selector in cookie_selectors:
-                try:
-                    elem = await self.page.query_selector(selector)
-                    if elem:
-                        await elem.click(timeout=2000)
-                        await self._human_delay(0.3, 0.6)
-                        logger.info(f"Dismissed cookie banner with selector: {selector}")
-                        return
-                except:
-                    continue
-        except Exception as e:
-            logger.warning(f"Cookie banner dismiss failed: {e}")
 
     async def _human_scroll(self, direction: str = "down", fraction: float = None):
         """Scroll with human-like randomisation (Phase 3.4).
@@ -1376,7 +1230,6 @@ class BrowserAgent:
                 url = arg if arg.startswith("http") else f"https://{arg}"
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await self._human_delay(0.5, 1.5)
-                await self._dismiss_cookie_banner()
                 result["success"] = True
                 result["url"] = self.page.url
 
@@ -1647,7 +1500,6 @@ class BrowserAgent:
                 # Retry with more relaxed waiting
                 logger.warning(f"Primary nav failed ({nav_err}), retrying with load strategy")
                 await self.page.goto(url, wait_until="load", timeout=45000)
-            await self._dismiss_cookie_banner()
             # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
             await self._dismiss_captcha_iframe()
             captcha_wait_count = 0   # BUG-05 fix: track consecutive wait()s for CAPTCHA loops
@@ -1765,10 +1617,6 @@ class BrowserAgent:
                 captcha_domain = await self._dismiss_captcha_iframe()
                 if captcha_domain:
                     logger.info(f"CAPTCHA detected during {action} — dismissed {captcha_domain}")
-
-                # Auto-dismiss popups/modals/cookie banners that appear mid-task
-                if action not in ("done", "screenshot", "wait"):
-                    await self._dismiss_cookie_banner()
 
                 try:
                     result = await asyncio.wait_for(
