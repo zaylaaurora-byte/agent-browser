@@ -276,8 +276,8 @@ class BrowserAgent:
         self._camoufox_ctx = None   # holds camoufox context manager for cleanup
         self._browser_engine = "chromium"
 
-    def _build_ai_messages(self, task: str, page_content: str) -> list:
-        """Build messages for AI including conversation history"""
+    def _build_ai_messages(self, task: str, page_content: str, screenshot_b64: str = None) -> list:
+        """Build messages for AI including conversation history and optional screenshot for vision."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(self.conversation_history)
 
@@ -320,8 +320,20 @@ class BrowserAgent:
         if captcha:
             warnings.append(f"⚠ CAPTCHA DETECTED: {captcha}")
         cookie_banner = data.get("cookie_banner")
+        cookie_banner_text = data.get("cookie_banner_text")
         if cookie_banner:
-            warnings.append(f"⚠ COOKIE BANNER: {cookie_banner}")
+            banner_msg = f"⚠ COOKIE BANNER: {cookie_banner}"
+            if cookie_banner_text:
+                banner_msg += f" | Content: {cookie_banner_text}"
+            warnings.append(banner_msg)
+        popup_dialog = data.get("popup_dialog")
+        if popup_dialog:
+            warnings.append(
+                f"⚠ POPUP/DIALOG BLOCKING PAGE: '{popup_dialog.get('heading','')}' — "
+                f"Body: {popup_dialog.get('body','')[:200]}. "
+                f"Selector: {popup_dialog.get('selector','')}. "
+                f"ACTION REQUIRED: Click the accept/agree/dismiss button inside this popup first."
+            )
         iframe_count = data.get("iframe_count", 0)
         if iframe_count > 0:
             warnings.append(f"ℹ {iframe_count} iframe(s) on page")
@@ -488,8 +500,67 @@ class BrowserAgent:
             return None
 
     async def _dismiss_cookie_banner(self):
-        """Auto-dismiss common cookie consent banners"""
+        """Auto-dismiss common cookie consent banners and YouTube GDPR consent page"""
         try:
+            # ── YouTube / Google consent page — wait for element then dismiss ─────
+            page_url = self.page.url if self.page else ""
+            is_youtube_consent = (
+                "consent.youtube.com" in page_url or
+                "consent.google.com" in page_url or
+                page_url.startswith("https://www.youtube.com") or
+                page_url.startswith("https://youtube.com")
+            )
+            if is_youtube_consent:
+                yt_consent_selectors = [
+                    "[aria-label='Accept all']",
+                    "[aria-label='Accept all cookies']",
+                    "[aria-label='I agree']",
+                    "button[type='submit']",
+                    "[data-action='save']",
+                    "button[aria-label*='accept']",
+                    "button[aria-label*='Accept']",
+                    "button[id*='accept']",
+                    "button[id*='agree']",
+                    "button[aria-label='Confirm your settings']",
+                ]
+                for selector in yt_consent_selectors:
+                    try:
+                        elem = await asyncio.wait_for(
+                            self.page.query_selector(selector), timeout=5.0
+                        )
+                        if elem and await elem.is_visible(timeout=2000):
+                            await elem.click(timeout=3000)
+                            await self._human_delay(0.5, 1.0)
+                            logger.info(f"YouTube consent dismissed with: {selector}")
+                            return
+                    except (asyncio.TimeoutError, Exception):
+                        continue
+                # Fallback: click any button with "accept" text
+                try:
+                    buttons = await self.page.query_selector_all("button")
+                    for btn in buttons:
+                        try:
+                            txt = await btn.text_content()
+                            if txt and "accept" in txt.lower():
+                                if await btn.is_visible(timeout=1000):
+                                    await btn.click(timeout=2000)
+                                    await self._human_delay(0.5, 1.0)
+                                    logger.info(f"YouTube consent dismissed (text): {txt.strip()}")
+                                    return
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                # Last fallback: press Enter
+                try:
+                    await self.page.keyboard.press("Enter")
+                    await self._human_delay(0.5, 1.0)
+                    logger.info("YouTube consent dismissed with Enter")
+                    return
+                except Exception:
+                    pass
+                return
+
             await asyncio.sleep(0.5)
             cookie_selectors = [
                 "[aria-label='Accept all cookies']",
@@ -715,12 +786,25 @@ class BrowserAgent:
                     '[aria-label*="accept" i]', '[aria-label*="allow" i]',
                 ];
                 let cookieBannerDetected = null;
+                let cookieBannerText = null;
                 for (const sel of cookieBannerSelectors) {
                     const el = document.querySelector(sel);
                     if (el && window.getComputedStyle(el).display !== 'none') {
                         cookieBannerDetected = sel;
+                        cookieBannerText = el.textContent ? el.textContent.trim().slice(0, 200) : sel;
                         break;
                     }
+                }
+                // ── YouTube GDPR consent page ─────────────────────────────────────
+                if (window.location.hostname === 'consent.youtube.com' ||
+                    document.title === 'Before you continue to YouTube' ||
+                    document.querySelector('[action*="consent"]')) {
+                    const heading = document.querySelector('h1, h2, [aria-label*="continue"]')?.textContent?.trim() || '';
+                    const subtext = document.querySelector('p, [class*="body"]')?.textContent?.trim().slice(0, 200) || '';
+                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'))
+                        .map(b => b.textContent?.trim() || b.value || '').filter(Boolean).slice(0, 5);
+                    cookieBannerDetected = 'youtube_gdpr';
+                    cookieBannerText = `GDPR_CONSENT: "${heading}" | "${subtext}" | Buttons: ${buttons.join(', ')}`;
                 }
 
                 // ── CAPTCHA / Cloudflare detection ───────────────────────────────
@@ -741,7 +825,54 @@ class BrowserAgent:
                     if (el.shadowRoot) shadowDomCount++;
                 }
 
-                // ── Iframe count ────────────────────────────────────────────────
+                // ── Modal / popup / overlay dialogs ──────────────────────────────
+                // Detect any visible modal, dialog, overlay, or full-screen popup
+                let popupDialog = null;
+                const modalSelectors = [
+                    '[role="dialog"]', '[role="alertdialog"]', '.modal', '.Modal',
+                    '[class*="modal"]', '[class*="Modal"]', '[class*="overlay"]',
+                    '[class*="Overlay"]', '[class*="popup"]', '[class*="Popup"]',
+                    '[class*="consent"]', '[class*="Consent"]', '[id*="consent"]',
+                    '[id*="Consent"]', '[aria-modal="true"]', '.遮罩', // Chinese "mask"
+                    '.cookies', '.Cookies', '.gdpr', '.GDPR',
+                ];
+                for (const sel of modalSelectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const style = window.getComputedStyle(el);
+                        const isVisible = style.display !== 'none' &&
+                                          style.visibility !== 'hidden' &&
+                                          el.offsetWidth > 0 &&
+                                          el.offsetHeight > 0;
+                        if (isVisible) {
+                            const heading = el.querySelector('h1, h2, h3, [aria-label]')?.textContent?.trim().slice(0, 100) || '';
+                            const body = el.textContent?.trim().slice(0, 300) || '';
+                            popupDialog = { selector: sel, heading, body };
+                            break;
+                        }
+                    }
+                }
+                // Also check for full-screen wrappers (YouTube consent style)
+                if (!popupDialog) {
+                    const body = document.body;
+                    if (body && body.offsetWidth > 0 && body.offsetHeight > 0) {
+                        const children = Array.from(body.children);
+                        for (const child of children) {
+                            const style = window.getComputedStyle(child);
+                            if (child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE' &&
+                                style.position === 'fixed' && child.offsetWidth > body.offsetWidth * 0.5) {
+                                popupDialog = {
+                                    selector: child.className ? `.${child.className.split(' ')[0]}` : child.tagName,
+                                    heading: child.querySelector('h1,h2')?.textContent?.trim().slice(0, 100) || '',
+                                    body: child.textContent?.trim().slice(0, 300) || ''
+                                };
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // ── Iframe count ───────────────────────────────────────────────
                 const iframes = document.querySelectorAll('iframe');
                 const iframeInfo = Array.from(iframes).map(f => ({
                     src: f.src ? f.src.slice(0, 80) : '',
@@ -843,6 +974,8 @@ class BrowserAgent:
                     // Phase 3.2 enriched fields
                     page_state: hasPendingRequests ? 'spa/dynamic' : 'static',
                     cookie_banner: cookieBannerDetected,
+                    cookie_banner_text: cookieBannerText,
+                    popup_dialog: popupDialog,
                     captcha: captchaDetected,
                     shadow_dom_count: shadowDomCount,
                     iframes: iframeInfo,
@@ -877,6 +1010,7 @@ class BrowserAgent:
             logger.warning("No API key available, using fallback AI")
             return self._fallback_ai(task, page_content), (time.monotonic() - start) * 1000, "fallback"
 
+        # Use MiniMax native endpoint to avoid OpenAI compat overhead + enable native params
         last_error = None
         for attempt in range(3):
             try:
@@ -885,11 +1019,19 @@ class BrowserAgent:
                 base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
                 client = OpenAI(api_key=api_key, base_url=base_url)
                 messages = self._build_ai_messages(task, page_content)
+
+                # Build extra params — MiniMax-native controls
+                extra = {}
+                # Disable extended thinking if supported (reduces reasoning token overhead)
+                if "MiniMax" in model_name or "minimax" in model_name.lower():
+                    extra["thinking_params"] = {"type": "off"}  # MiniMax native param
+
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=messages,
-                    max_tokens=600,
+                    max_tokens=2000,
                     temperature=0.3,
+                    **(extra if extra else {}),
                 )
                 ai_response = response.choices[0].message.content.strip()
                 self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
@@ -1338,7 +1480,6 @@ class BrowserAgent:
         await self._init_browser()
 
         steps_executed = 0
-        max_steps = 15 if mode == "fast" else (25 if mode == "deep" else 15)
 
         # Navigate to start
         nav_start = time.monotonic()
@@ -1369,7 +1510,7 @@ class BrowserAgent:
             }
             return
 
-        for step_num in range(2, max_steps + 1):
+        for step_num in itertools.count(start=2):
             # Get page state
             page_content = await self._get_page_content()
             page_data = self._parse_page_data(page_content)
@@ -1557,7 +1698,7 @@ class BrowserAgent:
         yield {
             "step": steps_executed,
             "action": "done",
-            "argument": f"Reached maximum steps ({max_steps})",
+            "argument": f"Reached step limit ({steps_executed} steps executed). Current page: {self.page.url if self.page else 'unknown'}",
             "status": "completed",
             "url": self.page.url if self.page else "",
             "page_title": await self.page.title() if self.page else "",
