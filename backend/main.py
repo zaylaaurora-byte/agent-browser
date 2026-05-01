@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from browser_agent import BrowserAgent
+from backend.browser_agent import BrowserAgent
 
 # ─── In-memory session store ─────────────────────────────────────────────────
 _sessions: dict[str, dict] = {}

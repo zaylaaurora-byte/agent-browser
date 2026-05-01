@@ -453,6 +453,40 @@ class BrowserAgent:
         self.page.set_default_timeout(15000)
         self.page.set_default_navigation_timeout(30000)
 
+    async def _dismiss_captcha_iframe(self):
+        """BUG-02 fix: Detect and auto-dismiss CAPTCHA/delivery iframes.
+        Detects: captcha-delivery.com, hcaptcha, recaptcha, cloudflare challenges.
+        Returns the domain of any CAPTCHA detected (or None)."""
+        CAPTCHA_DOMAINS = [
+            "captcha-delivery.com",
+            "hcaptcha.com",
+            "recaptcha.net",
+            "google.com/recaptcha",
+            "cloudflare.com/cfdn",
+            "challenges.cloudflare.com",
+            "data-media.io",
+            "privacy-mgmt.com",
+        ]
+        try:
+            iframes = await self.page.query_selector_all("iframe")
+            for iframe in iframes:
+                try:
+                    src = await iframe.get_attribute("src") or ""
+                    for domain in CAPTCHA_DOMAINS:
+                        if domain in src.lower():
+                            box = await iframe.bounding_box()
+                            if box and box["width"] > 10 and box["height"] > 10:
+                                logger.info(f"CAPTCHA iframe detected: {domain} — auto-closing")
+                                await iframe.evaluate("el => el.remove()")
+                                await self._human_delay(0.3, 0.6)
+                                return domain
+                except Exception:
+                    continue
+            return None
+        except Exception as e:
+            logger.warning(f"CAPTCHA iframe check failed: {e}")
+            return None
+
     async def _dismiss_cookie_banner(self):
         """Auto-dismiss common cookie consent banners"""
         try:
@@ -1298,6 +1332,9 @@ class BrowserAgent:
         try:
             await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
             await self._dismiss_cookie_banner()
+            # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
+            await self._dismiss_captcha_iframe()
+            captcha_wait_count = 0   # BUG-05 fix: track consecutive wait()s for CAPTCHA loops
             steps_executed += 1
             nav_ms = int((time.monotonic() - nav_start) * 1000)
             yield {
@@ -1390,6 +1427,12 @@ class BrowserAgent:
             # Execute all actions in sequence
             for batch_idx, (action, arg) in enumerate(all_actions):
                 exec_start = time.monotonic()
+
+                # BUG-02 fix: before EVERY action, check for CAPTCHA iframes and dismiss.
+                captcha_domain = await self._dismiss_captcha_iframe()
+                if captcha_domain:
+                    logger.info(f"CAPTCHA detected during {action} — dismissed {captcha_domain}")
+
                 try:
                     result = await asyncio.wait_for(
                         self._execute_action(action, arg),
@@ -1403,6 +1446,27 @@ class BrowserAgent:
                 answer_val = result.get("answer", "")
 
                 if result["success"]:
+                    # BUG-05 fix: track consecutive wait()s; bail after 3 with CAPTCHA clear message
+                    if action == "wait":
+                        captcha_wait_count += 1
+                        if captcha_wait_count >= 3:
+                            yield {
+                                "step": step_num,
+                                "action": "done",
+                                "argument": f"Stopped: CAPTCHA/site protection detected after {captcha_wait_count} consecutive wait() attempts.",
+                                "status": "completed",
+                                "url": self.page.url if self.page else page_url,
+                                "page_title": await self.page.title() if self.page else page_title_val,
+                                "duration_ms": exec_ms,
+                                "model": model_name, "engine": self._browser_engine,
+                                "ai_reasoning": f"CAPTCHA loop detected: {captcha_wait_count} consecutive wait() calls with no page progress. Giving up with a clear message.",
+                                "observation": f"CAPTCHA blocker detected after {captcha_wait_count} wait attempts.",
+                                "screenshot": await self._take_screenshot(),
+                                "answer": "CAPTCHA detected — site is blocking automation. Consider using stealth mode or a different target.",
+                            }
+                            return
+                    else:
+                        captcha_wait_count = 0   # reset on non-wait action
                     steps_executed += 1
 
                     if action == "done":

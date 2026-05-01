@@ -78,12 +78,30 @@ export function AgentBrowser() {
     setWsStatus("disconnected");
   }, []);
 
+  // Scroll activity panel into view when Activity tab is selected on mobile
+  const scrollToActivity = useCallback(() => {
+    feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  useEffect(() => {
+    if (mobileTab === "activity") scrollToActivity();
+  }, [mobileTab, scrollToActivity]);
+
+  // Scroll-to-agent for "Launch Agent" buttons
+  const scrollToAgent = useCallback(() => {
+    document.getElementById("agent-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   const run = useCallback(() => {
     if (!url || !task) return;
     localStorage.setItem("ab-last-task", JSON.stringify({ url, task, mode }));
     lastTaskRef.current = task;
     disconnect();
-    setIsRunning(true); setSteps([]); setCurrentScreenshot(null);
+
+    // BUG-04 fix: set isRunning synchronously BEFORE any async work so the
+    // button transitions to "Stop" immediately on click (optimistic UI).
+    setIsRunning(true);
+    setSteps([]); setCurrentScreenshot(null);
     setFinalAnswer(null); setLatestThinking(null); setCurrentUrl(url);
     setExecutionTime(null); setScreenshotHistory([]); setActiveScreenshotIndex(-1);
     setExpandedSteps(new Set());
@@ -108,22 +126,28 @@ export function AgentBrowser() {
       try {
         const d: Step = JSON.parse(e.data);
         d.timestamp = Date.now();
+        // BUG-03 fix: one step per action — thinking is updated in-place (no duplicate
+        // in steps array); only "completed"/"snapshot"/"failed" get added to steps.
         if (d.status === "thinking") {
           setLatestThinking(d.thinking ?? d.ai_reasoning ?? null);
           if (d.screenshot) setCurrentScreenshot(d.screenshot);
-        }
-        if (d.status === "completed" || d.status === "snapshot") {
+          // Replace any existing thinking entry for this step# so we never
+          // have two entries with the same step# in the feed.
+          setSteps((p) => {
+            const without_thinking = p.filter((s) => !(s.step === d.step && s.status === "thinking"));
+            return [...without_thinking, d];
+          });
+        } else if (d.status === "completed" || d.status === "snapshot") {
+          // Remove the thinking entry for this step, then add the completed one
           setSteps((p) => [...p.filter((s) => !(s.step === d.step && s.status === "thinking")), d]);
           if (d.screenshot) { setCurrentScreenshot(d.screenshot); setScreenshotHistory((p) => [...p, d.screenshot!].slice(-20)); }
           setLatestThinking(null);
-        }
-        if (d.action === "done") {
+        } else if (d.action === "done") {
           setFinalAnswer(d.answer ?? null);
           if (d.screenshot) setCurrentScreenshot(d.screenshot);
           setExecutionTime(Math.round((Date.now() - startRef.current) / 1000));
           setIsRunning(false); disconnect();
-        }
-        if (d.action === "error" || d.status === "failed") {
+        } else if (d.action === "error" || d.status === "failed") {
           setSteps((p) => [...p.filter((s) => !(s.step === d.step && s.status === "thinking")), d]);
           if (d.screenshot) setCurrentScreenshot(d.screenshot);
           setIsRunning(false);
@@ -138,6 +162,17 @@ export function AgentBrowser() {
     disconnect(); setIsRunning(false);
     setExecutionTime(Math.round((Date.now() - startRef.current) / 1000));
   }, [disconnect]);
+
+  // Expose run/stop to window for programmatic access (BUG-01 fix: direct JS call fallback)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run/stop are stable useCallback refs
+  useEffect(() => {
+    (window as any).agentBrowserRun  = run;
+    (window as any).agentBrowserStop = stop;
+  }, [run, stop]);
+
+  useEffect(() => {
+    (window as any).agentBrowserScrollToAgent = scrollToAgent;
+  }, [scrollToAgent]);
 
   const completedSteps = steps.filter((s) => s.status === "completed" || s.action === "done").length;
   const failedSteps    = steps.filter((s) => s.status === "retrying" || s.status === "failed").length;
