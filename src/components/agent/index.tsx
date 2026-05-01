@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Play, Square } from "lucide-react";
+import { Globe, Brain, Zap } from "lucide-react";
 import { TaskInput } from "./task-input";
 import { BrowserViewport } from "./browser-viewport";
 import { ThinkingPanel } from "./thinking-panel";
@@ -15,32 +15,41 @@ import type { Step, Mode } from "./types";
 
 export { QUICK_SITES } from "./types";
 
+type MobileTab = "browser" | "thinking" | "activity";
+
+const MOBILE_TABS: { id: MobileTab; label: string; Icon: React.ElementType }[] = [
+  { id: "browser",  label: "Browser",  Icon: Globe  },
+  { id: "thinking", label: "Thinking", Icon: Brain  },
+  { id: "activity", label: "Activity", Icon: Zap    },
+];
+
 export function AgentBrowser() {
   const [url, setUrl]           = useState("https://httpbin.org/forms/post");
   const [task, setTask]         = useState(
     "Go to the page and describe what you see — identify any forms, buttons, and interactive elements."
   );
   const [mode, setMode]         = useState<Mode>("deep");
-  const [isRunning, setIsRunning]         = useState(false);
-  const [steps, setSteps]                   = useState<Step[]>([]);
-  const [currentScreenshot, setCurrentScreenshot] = useState<string | null>(null);
-  const [finalAnswer, setFinalAnswer]       = useState<string | null>(null);
-  const [wsStatus, setWsStatus]             = useState<"disconnected" | "connecting" | "connected">("disconnected");
-  const [currentUrl, setCurrentUrl]         = useState(url);
-  const [executionTime, setExecutionTime]  = useState<number | null>(null);
-  const [latestThinking, setLatestThinking] = useState<string | null>(null);
-  const [screenshotHistory, setScreenshotHistory] = useState<string[]>([]);
+  const [isRunning, setIsRunning]                       = useState(false);
+  const [steps, setSteps]                               = useState<Step[]>([]);
+  const [currentScreenshot, setCurrentScreenshot]       = useState<string | null>(null);
+  const [finalAnswer, setFinalAnswer]                   = useState<string | null>(null);
+  const [wsStatus, setWsStatus]                         = useState<"disconnected" | "connecting" | "connected">("disconnected");
+  const [currentUrl, setCurrentUrl]                     = useState(url);
+  const [executionTime, setExecutionTime]               = useState<number | null>(null);
+  const [latestThinking, setLatestThinking]             = useState<string | null>(null);
+  const [screenshotHistory, setScreenshotHistory]       = useState<string[]>([]);
   const [activeScreenshotIndex, setActiveScreenshotIndex] = useState<number>(-1);
-  const [expandedSteps, setExpandedSteps]   = useState<Set<number>>(new Set());
-  const [lightboxOpen, setLightboxOpen]     = useState(false);
-  const [showShortcuts, setShowShortcuts]   = useState(false);
-  const [showSettings, setShowSettings]     = useState(false);
+  const [expandedSteps, setExpandedSteps]               = useState<Set<number>>(new Set());
+  const [lightboxOpen, setLightboxOpen]                 = useState(false);
+  const [showShortcuts, setShowShortcuts]               = useState(false);
+  const [showSettings, setShowSettings]                 = useState(false);
+  const [mobileTab, setMobileTab]                       = useState<MobileTab>("browser");
 
-  const wsRef               = useRef<WebSocket | null>(null);
-  const feedRef             = useRef<HTMLDivElement>(null);
-  const thinkingRef          = useRef<HTMLDivElement>(null);
-  const startTimeRef         = useRef<number>(0);
-  const lastTaskRef          = useRef<string>("");
+  const wsRef        = useRef<WebSocket | null>(null);
+  const feedRef      = useRef<HTMLDivElement>(null);
+  const thinkingRef  = useRef<HTMLDivElement>(null);
+  const startTimeRef = useRef<number>(0);
+  const lastTaskRef  = useRef<string>("");
 
   const scrollToBottom = useCallback(() => {
     if (feedRef.current)     feedRef.current.scrollTop     = feedRef.current.scrollHeight;
@@ -49,27 +58,13 @@ export function AgentBrowser() {
 
   useEffect(() => { scrollToBottom(); }, [steps, latestThinking, scrollToBottom]);
 
-  // ─── Keyboard shortcuts ───────────────────────────────────────────────────
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const ctrl = e.ctrlKey || e.metaKey;
-
-      // Cmd/Ctrl + Enter → execute
-      if (ctrl && e.key === "Enter") {
-        e.preventDefault();
-        if (!isRunning && url && task) runTask();
-      }
-      // Escape → stop
-      if (e.key === "Escape" && isRunning) {
-        e.preventDefault();
-        stopTask();
-      }
-      // ? → shortcuts overlay
-      if (e.key === "?" && !isRunning) {
-        e.preventDefault();
-        setShowShortcuts((v) => !v);
-      }
-      // r → replay last task
+      if (ctrl && e.key === "Enter") { e.preventDefault(); if (!isRunning && url && task) runTask(); }
+      if (e.key === "Escape" && isRunning) { e.preventDefault(); stopTask(); }
+      if (e.key === "?" && !isRunning) { e.preventDefault(); setShowShortcuts((v) => !v); }
       if (e.key === "r" && !isRunning && !e.ctrlKey && !e.metaKey && lastTaskRef.current) {
         const stored = localStorage.getItem("agent-browser-last-task");
         if (stored) {
@@ -84,6 +79,11 @@ export function AgentBrowser() {
     return () => window.removeEventListener("keydown", handler);
   }, [isRunning, url, task]);
 
+  // Auto-switch mobile tab to browser when running starts
+  useEffect(() => {
+    if (isRunning) setMobileTab("browser");
+  }, [isRunning]);
+
   const disconnectWs = useCallback(() => {
     if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     setWsStatus("disconnected");
@@ -91,7 +91,6 @@ export function AgentBrowser() {
 
   const runTask = useCallback(async () => {
     if (!url || !task) return;
-    // Persist last task for replay
     localStorage.setItem("agent-browser-last-task", JSON.stringify({ url, task, mode }));
     lastTaskRef.current = task;
 
@@ -108,7 +107,6 @@ export function AgentBrowser() {
     setExpandedSteps(new Set());
     startTimeRef.current = Date.now();
 
-    // Read backendUrl + credentials from settings
     const defaultWsUrl = "ws://localhost:8001/ws/agent";
     const stored = localStorage.getItem("agent-browser-settings");
     let wsUrl = defaultWsUrl;
@@ -185,27 +183,18 @@ export function AgentBrowser() {
     setExecutionTime(Math.round((Date.now() - startTimeRef.current) / 1000));
   }, [disconnectWs]);
 
-  const replayLast = useCallback(() => {
-    const stored = localStorage.getItem("agent-browser-last-task");
-    if (!stored) return;
-    try {
-      const { url: lu, task: lt, mode: lm } = JSON.parse(stored);
-      setUrl(lu); setTask(lt); setMode(lm as Mode);
-    } catch { /* ignore */ }
-  }, []);
-
   const openLightbox = useCallback(() => {
     if (currentScreenshot) setLightboxOpen(true);
   }, [currentScreenshot]);
 
   const completedSteps = steps.filter((s) => s.status === "completed" || s.action === "done").length;
-  const failedSteps     = steps.filter((s) => s.status === "retrying" || s.status === "failed").length;
+  const failedSteps    = steps.filter((s) => s.status === "retrying" || s.status === "failed").length;
 
   return (
     <>
-      <div className="relative z-10 max-w-[1920px] mx-auto w-full px-6 pb-12">
+      <div className="relative z-10 max-w-screen-2xl mx-auto w-full px-3 sm:px-6 pb-10 sm:pb-14">
 
-        {/* Task Input Bar */}
+        {/* Task Input */}
         <TaskInput
           url={url} setUrl={setUrl}
           task={task} setTask={setTask}
@@ -217,30 +206,56 @@ export function AgentBrowser() {
           onShowSettings={() => setShowSettings(true)}
         />
 
-        {/* Main 3-column layout */}
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
-          {/* Left column */}
-          <div className="space-y-6">
-            <BrowserViewport
-              currentScreenshot={currentScreenshot}
-              currentUrl={currentUrl}
-              mode={mode}
-              isRunning={isRunning}
-              wsStatus={wsStatus}
-              completedSteps={completedSteps}
-              executionTime={executionTime}
-              screenshotHistory={screenshotHistory}
-              activeScreenshotIndex={activeScreenshotIndex}
-              onScreenshotClick={openLightbox}
-              onThumbnailClick={(ss, i) => { setCurrentScreenshot(ss); setActiveScreenshotIndex(i); }}
-            />
+        {/* Mobile tab switcher — hidden on xl+ */}
+        <div className="flex xl:hidden gap-1 mb-4 p-1 glass-surface rounded-2xl">
+          {MOBILE_TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => setMobileTab(id)}
+              className={`flex flex-1 items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-semibold tracking-wide transition-all duration-150 ${
+                mobileTab === id
+                  ? "bg-violet-500/15 text-violet-300 border border-violet-500/30"
+                  : "text-zinc-600 hover:text-zinc-400"
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
 
-            <ThinkingPanel
-              steps={steps}
-              latestThinking={latestThinking}
-              isRunning={isRunning}
-              thinkingRef={thinkingRef}
-            />
+        {/* Main layout */}
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
+
+          {/* Left column — Browser + Thinking + Result */}
+          <div className={`space-y-5 ${mobileTab !== "browser" && mobileTab !== "thinking" ? "hidden xl:block" : ""}`}>
+
+            {/* Browser viewport — shown on browser tab or xl */}
+            <div className={mobileTab === "thinking" ? "hidden xl:block" : ""}>
+              <BrowserViewport
+                currentScreenshot={currentScreenshot}
+                currentUrl={currentUrl}
+                mode={mode}
+                isRunning={isRunning}
+                wsStatus={wsStatus}
+                completedSteps={completedSteps}
+                executionTime={executionTime}
+                screenshotHistory={screenshotHistory}
+                activeScreenshotIndex={activeScreenshotIndex}
+                onScreenshotClick={openLightbox}
+                onThumbnailClick={(ss, i) => { setCurrentScreenshot(ss); setActiveScreenshotIndex(i); }}
+              />
+            </div>
+
+            {/* Thinking panel — shown on thinking tab or xl */}
+            <div className={mobileTab === "browser" ? "hidden xl:block" : ""}>
+              <ThinkingPanel
+                steps={steps}
+                latestThinking={latestThinking}
+                isRunning={isRunning}
+                thinkingRef={thinkingRef}
+              />
+            </div>
 
             <AnimatePresence>
               {finalAnswer && (
@@ -253,26 +268,25 @@ export function AgentBrowser() {
             </AnimatePresence>
           </div>
 
-          {/* Right column */}
-          <ActivityFeed
-            steps={steps}
-            isRunning={isRunning}
-            completedSteps={completedSteps}
-            failedSteps={failedSteps}
-            expandedSteps={expandedSteps}
-            setExpandedSteps={setExpandedSteps}
-            feedRef={feedRef}
-          />
+          {/* Right column — Activity feed */}
+          <div className={mobileTab !== "activity" ? "hidden xl:block" : ""}>
+            <ActivityFeed
+              steps={steps}
+              isRunning={isRunning}
+              completedSteps={completedSteps}
+              failedSteps={failedSteps}
+              expandedSteps={expandedSteps}
+              setExpandedSteps={setExpandedSteps}
+              feedRef={feedRef}
+            />
+          </div>
         </div>
       </div>
 
       {/* Modals */}
       <AnimatePresence>
         {lightboxOpen && currentScreenshot && (
-          <Lightbox
-            screenshot={currentScreenshot}
-            onClose={() => setLightboxOpen(false)}
-          />
+          <Lightbox screenshot={currentScreenshot} onClose={() => setLightboxOpen(false)} />
         )}
       </AnimatePresence>
 

@@ -7,7 +7,9 @@ export default function Home() {
   return (
     <main className="pt-14">
       <HeroSection />
-      <AgentBrowser />
+      <section id="agent-section">
+        <AgentBrowser />
+      </section>
     </main>
   );
 }
