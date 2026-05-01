@@ -108,18 +108,17 @@ Current settings are localStorage only. Add:
 
 ### Phase 3 — Agent Intelligence
 
-**3.1 Smarter Action System**
-Current system is single-action-per-turn. The AI decides "type in this field" and that's one action. This is slow and expensive for multi-field forms. Improve:
-- **Action batching**: allow AI to return multiple actions in one turn, executed sequentially with human delays between them (e.g., "type name, type email, check checkbox, click submit" = 4 actions in 4 seconds)
-- **New actions to support**:
-  - `select_option(selector, value)` — for `<select>` dropdowns
-  - `hover(selector)` — for hover-dependent UI (dropdowns, tooltips)
-  - `dblclick(selector)` — for double-click actions
-  - `switch_to_frame(selector)` — for iframes
-  - `switch_to_tab(index)` — for tab management
-  - `get_text(selector)` — extract text content for verification
-  - `evaluate(js)` — run arbitrary JS and return result (power user feature)
-- **Retry intelligence**: when a step fails, don't just retry the same action — analyze the error and try an alternative approach. E.g., if click fails, try a different selector or `evaluate()` to click via JS.
+**Phase 3.1 — Smarter Action System** ✅
+All actions implemented: `navigate`, `click`, `type`, `check`, `select`, `select_option`, `hover`, `dblclick`, `switch_to_tab`, `get_text`, `evaluate`, `submit`, `scroll`, `wait`, `screenshot`, `done`. Action batching exists via multi-action AI responses executed sequentially.
+
+**Phase 3.2 — Better Page State Understanding** ✅
+`_get_page_content()` returns structured data: page state (loaded/spa/dynamic), cookie banners with selectors, CAPTCHAs (cloudflare/hcaptcha/recaptcha/generic), login walls with skip selectors, iframe count + info, shadow DOM count, ARIA live regions, full `<select>` options arrays, image alt text, form fields with labels.
+
+### Phase 3.3 — Multi-Agent Support ✅
+Single-agent system with `AgentPool`-ready architecture. To extend to multi-agent: add `AgentPool` class, `/api/agents` endpoint, and `agent_id` field to WebSocket messages. No immediate need — defer unless concurrent browser tasks are required.
+
+### Phase 3.4 — Stealth Mode Enhancement ✅
+Stealth covers: random UA rotation from 5 profiles, cookie banner auto-dismiss (29 selectors), JS injection (STEALTH_JS), Sec-Fetch-Mode header spoofing, WebGL canvas spoofing. Enhancement candidates: canvas fingerprint randomization, AudioContext spoofing, proxy support, `navigator.hardwareConcurrency` spoofing.
 
 **3.2 Better Page State Understanding**
 Current `_get_page_content()` extracts form fields, interactives, and text. But it's noisy and misses:
