@@ -1,5 +1,11 @@
 # Agent Browser — Product Roadmap
 
+## Core Objective
+
+**A browser agent that can access any website, handle anything, reason visually.** Full vision + action on any site — no exceptions, no "this site doesn't work." The agent sees what you see and does what you'd do.
+
+---
+
 ## Where We Are
 
 **Frontend** — Next.js 16 + Tailwind CSS 4 + Framer Motion. Dark glassmorphism UI with parallax hero. Main component is a single 569-line `agent-browser.tsx` (task input + browser viewport + thinking panel + activity feed). Settings page at `/settings`. All in `~/Projects/agent-browser/src/`.
