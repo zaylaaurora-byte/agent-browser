@@ -16,6 +16,9 @@ VAULT_CREDENTIALS_FILE = VAULT_DIR / "credentials.enc"
 VAULT_AUDIT_FILE = VAULT_DIR / "audit.log"
 AUDIT_MODE = 0o600
 
+# Internal token for vault endpoint authentication (prevents credential exfiltration)
+_VAULT_TOKEN = os.getenv("VAULT_API_TOKEN", "agent-browser-internal-dev-token")
+
 class CredentialVault:
     def __init__(self):
         self._ensure_master_key()

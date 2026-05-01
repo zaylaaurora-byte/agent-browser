@@ -8,8 +8,18 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 
+import re
+
 SESSIONS_DIR = Path("~/.agent-browser/sessions").expanduser()
 SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Sanitize session name to prevent path traversal attacks
+def _sanitize_session_name(name: str) -> str:
+    """Strip anything that isn't alphanumeric, dash, underscore, or dot."""
+    sanitized = re.sub(r"[^\w\-.]", "", name)
+    if not sanitized or sanitized.startswith("."):
+        sanitized = "_" + sanitized.lstrip(".")
+    return sanitized
 
 
 class SessionManager:
@@ -73,17 +83,19 @@ class SessionManager:
             "proxy": getattr(self.browser, "proxy_url", None),
         }
 
-        path = SESSIONS_DIR / f"{name}.json"
+        safe_name = _sanitize_session_name(name)
+        path = SESSIONS_DIR / f"{safe_name}.json"
         path.write_text(json.dumps(session_data, indent=2))
         os.chmod(path, 0o600)
-        self.active_session_name = name
-        return {"saved": True, "name": name, "path": str(path)}
+        self.active_session_name = safe_name
+        return {"saved": True, "name": safe_name, "path": str(path)}
 
     async def load_session(self, name: str) -> dict:
         """Restore browser state from a named session."""
-        path = SESSIONS_DIR / f"{name}.json"
+        safe_name = _sanitize_session_name(name)
+        path = SESSIONS_DIR / f"{safe_name}.json"
         if not path.exists():
-            return {"error": f"Session '{name}' not found"}
+            return {"error": f"Session '{safe_name}' not found"}
 
         session_data = json.loads(path.read_text())
 
@@ -101,8 +113,8 @@ class SessionManager:
         except Exception as e:
             return {"error": f"Failed to apply localStorage: {e}"}
 
-        self.active_session_name = name
-        return {"loaded": True, "name": name}
+        self.active_session_name = safe_name
+        return {"loaded": True, "name": safe_name}
 
     def list_sessions(self) -> list:
         """List all saved sessions (name, saved_at, url from cookies domain)."""
@@ -126,11 +138,13 @@ class SessionManager:
 
     def delete_session(self, name: str) -> dict:
         """Delete a named session."""
-        path = SESSIONS_DIR / f"{name}.json"
+        safe_name = _sanitize_session_name(name)
+        path = SESSIONS_DIR / f"{safe_name}.json"
         if path.exists():
             path.unlink()
-        return {"deleted": True, "name": name}
+        return {"deleted": True, "name": safe_name}
 
     def get_session_path(self, name: str) -> str:
         """Return the file path for a named session."""
-        return str(SESSIONS_DIR / f"{name}.json")
+        safe_name = _sanitize_session_name(name)
+        return str(SESSIONS_DIR / f"{safe_name}.json")

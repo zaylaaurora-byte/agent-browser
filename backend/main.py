@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from browser_agent import BrowserAgent
 from mcp_server import create_mcp_server, set_agent
-from credential_vault import CredentialVault, VAULT_AUDIT_FILE
+from credential_vault import CredentialVault, VAULT_AUDIT_FILE, _VAULT_TOKEN
 
 vault = CredentialVault()
 
@@ -376,11 +376,15 @@ async def add_vault_credential(cred: CredentialAdd):
 
 
 @app.post("/api/vault/fill/{domain}")
-async def fill_vault_credential(domain: str):
+async def fill_vault_credential(domain: str, request: Request):
     """
     Blind fill — returns actual credential for page form injection.
     NEVER returns password to AI — only to the form filler.
+    Requires X-Vault-Token header for authentication.
     """
+    token = request.headers.get("x-vault-token", "")
+    if token != _VAULT_TOKEN:
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
     return vault.fill_credential(domain)
 
 

@@ -70,7 +70,7 @@ class ActionHistory:
 
         # Capture URL + title
         url = page.url
-        title = page.title()
+        title = await page.title()
 
         # Capture cookies
         cookies = await context.cookies()
@@ -121,24 +121,30 @@ class ActionHistory:
         if snapshot.cookies:
             await context.add_cookies(snapshot.cookies)
 
-        # Restore localStorage
+        # Restore localStorage — use params to avoid JS injection
         page = self.browser.page
         if snapshot.local_storage:
-            await page.evaluate(f"""
-                Object.entries({json.dumps(snapshot.local_storage)}).forEach(([k, v]) => {{
-                    localStorage.setItem(k, v);
-                }});
-            """)
+            for k, v in snapshot.local_storage.items():
+                try:
+                    await page.evaluate(
+                        "(k, v) => { try { localStorage.setItem(k, v); } catch(_) {} }",
+                        k, v
+                    )
+                except Exception:
+                    pass
 
         # Navigate back to the URL
         if snapshot.url != page.url:
             await page.goto(snapshot.url, wait_until="domcontentloaded")
 
-        # Restore scroll position
+        # Restore scroll position — guard with numeric coercion
         if snapshot.scroll_position:
-            await page.evaluate(f"""
-                window.scrollTo({snapshot.scroll_position['x']}, {snapshot.scroll_position['y']});
-            """)
+            x = float(snapshot.scroll_position.get('x', 0) or 0)
+            y = float(snapshot.scroll_position.get('y', 0) or 0)
+            await page.evaluate(
+                "(x, y) => window.scrollTo(x, y)",
+                x, y
+            )
 
         return {
             "undone": True,

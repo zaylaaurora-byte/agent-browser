@@ -406,6 +406,9 @@ class BrowserAgent:
         # Action history + undo (Phase 6)
         self.action_history = ActionHistory(self)
 
+        # SQLite run history DB (Phase 4)
+        self.run_db_id: Optional[int] = None
+
     def _build_ai_messages(self, task: str, page_content: str, screenshot_b64: str = None) -> list:
         """Build messages for AI including conversation history and optional screenshot for vision."""
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -1695,6 +1698,7 @@ class BrowserAgent:
             consecutive_failures = 0  # Track consecutive step failures — bail after 3
             steps_executed += 1
             nav_ms = int((time.monotonic() - nav_start) * 1000)
+            self._save_step({"step": steps_executed, "action": "navigate", "status": "completed", "screenshot": None})
             yield {
                 "step": steps_executed,
                 "action": "navigate",

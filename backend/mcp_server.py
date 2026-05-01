@@ -513,7 +513,7 @@ async def _call_browser_session_save(agent: Any, arguments: dict) -> list[TextCo
 
     try:
         result = await agent.save_session(name)
-        if result.get("success"):
+        if result.get("saved"):
             return [TextContent(type="text", text=f"Session '{name}' saved successfully.")]
         else:
             return [TextContent(type="text", text=f"Session save failed: {result.get('error', 'unknown error')}")]
@@ -528,7 +528,7 @@ async def _call_browser_session_load(agent: Any, arguments: dict) -> list[TextCo
 
     try:
         result = await agent.load_session(name)
-        if result.get("success"):
+        if result.get("loaded"):
             return [TextContent(type="text", text=f"Session '{name}' loaded successfully.")]
         else:
             return [TextContent(type="text", text=f"Session load failed: {result.get('error', 'unknown error')}")]
@@ -541,10 +541,11 @@ async def _call_browser_get_page_info(agent: Any, arguments: dict) -> list[TextC
         return [TextContent(type="text", text="Error: No active browser session.")]
 
     try:
+        load_state = page.is_load_state("load")
         info = {
-            "url": agent.page.url,
-            "title": await agent.page.title() if agent.page else "",
-            "is_loading": agent.page.is_loaded() is False,  # is_loaded is not quite right but close
+            "url": page.url,
+            "title": await page.title(),
+            "load_state": load_state,
             "engine": getattr(agent, "_browser_engine", "unknown"),
         }
         return [TextContent(type="text", text=json.dumps(info, indent=2))]
