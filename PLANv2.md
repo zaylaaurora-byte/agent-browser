@@ -49,7 +49,8 @@
 - **Symptom:** The live activity panel (right column, Activity tab) is below the fold on certain viewport sizes. User must scroll to see it.
 - **Root cause:** The 3-panel layout (viewport + thinking + activity) is desktop-first. Mobile shows tabs but the active tab content may still be below the fold.
 - **Fix needed:** Ensure the mobile tab bar sticks at the bottom or that switching to Activity tab scrolls to the panel. Also improve the "Launch Agent" button (top of page) to scroll down to the agent section on click.
-
+- **Fix applied (May 1, 2026):** Added `pb-24 xl:pb-0` to main grid (accounts for fixed tab bar height), added `flex-1` to ActivityFeed to expand on mobile, `scrollToActivity` already scrolls feed into view on tab switch, `scrollToAgent` exposed via window for Launch Agent button.
+- **Status:** ✅ Fixed
 ---
 
 ## Fixes Applied During This QA Run
