@@ -1,0 +1,22 @@
+services:
+  agent-browser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent-browser:latest
+    container_name: agent-browser
+    ports:
+      - "3000:80"
+      - "8001:8001"
+    environment:
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-MiniMax-M2.7}
+    volumes:
+      # Persist playwright browser cache
+      - playwright-cache:/root/.cache/ms-playwright
+    shm_size: "2gb"
+    restart: unless-stopped
+
+volumes:
+  playwright-cache:

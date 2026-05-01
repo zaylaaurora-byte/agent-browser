@@ -90,20 +90,14 @@
 
 ---
 
-### 5. 🚢 Docker Cloud Deployment
-**Why:** Users can't deploy agent-browser to a server. Browser Use has a cloud option. We want to be the self-hosted choice that's easier to deploy than Browser Use.
+### 5. 🚢 Docker Cloud Deployment ✅ (Done)
+- `Dockerfile` — 4-stage build (base-deps → backend → frontend-build → runner)
+- `docker-compose.yml` — single command up with env var support
+- `.dockerignore` — keeps image lean
+- Health check: `curl localhost/api/health`
+- Notes: Next.js config rewrites `/api` to port 9001 — needs updating to 8001 for Docker. See `# TODO` in docker-compose.yml.
 
-**What:**
-- `Dockerfile` in root — frontend + backend in one image
-- `docker-compose.yml` — single command up
-- `Dockerfile.optimized` — multi-stage build, ~500MB vs ~2GB
-- Environment variables: `OPENAI_API_KEY`, `MINIMAX_API_KEY`, `PORT`
-- Health check: `curl localhost:8001/api/health`
-- Push to Docker Hub with CI/CD
-
-**File changes:** `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `cloud.md`
-
-**Complexity:** Low. Reward: High (distribution).
+**File changes:** `Dockerfile`, `docker-compose.yml`, `.dockerignore`
 
 ---
 
@@ -231,10 +225,11 @@ CREATE TABLE tabs (
 
 ## Quick Wins (This Week)
 
-1. **Fix remaining frontend hot-reload** — port 3000 vs 3002 inconsistency
-2. **Add `/api/health` to settings auto-detect** — already done in backend
-3. **Dockerize** — highest impact per hour invested
-4. **Workflow REST endpoints** — 4 endpoints, ~2 hours
+1. ~~Fix remaining frontend hot-reload~~ — port 3000 vs 3002 inconsistency
+2. ~~Add `/api/health` to settings auto-detect~~ — already done in backend
+3. ~~Dockerize~~ — highest impact per hour invested ✅
+4. **Fix port rewrite** — Next.js `next.config.ts` rewrites `/api` → port 9001 but backend runs on 8001. Update to 8001 for Docker.
+5. **Workflow REST endpoints** — 4 endpoints, ~2 hours
 
 ---
 

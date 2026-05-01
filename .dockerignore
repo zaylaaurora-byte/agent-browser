@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Dependencies
+node_modules
+__pycache__
+*.pyc
+*.pyo
+
+# Build artifacts
+.next
+out
+dist
+build
+
+# Development
+*.md
+!README.md
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage
+.nyc_output
+*.test.js
+*.spec.js
