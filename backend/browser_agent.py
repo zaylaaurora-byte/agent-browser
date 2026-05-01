@@ -975,8 +975,11 @@ class BrowserAgent:
         text = re.sub(r'\s*(?:Let me|I hope|I believe|This should|Hopefully).*$', '', text, flags=re.IGNORECASE).strip()
         
         # Remove tool call artifacts (MiniMax sometimes emits [TOOL_CALL] blocks)
-        text = re.sub(r'\[TOOL_CALL\][\s\S]*?$', '', text, flags=re.MULTILINE).strip()
-        text = re.sub(r'\[TOOL_CALL\]', '', text).strip()
+        text = re.sub(r'\[TOOL_CALL][\s\S]*?$', '', text, flags=re.MULTILINE).strip()
+        text = re.sub(r'\[TOOL_CALL]', '', text).strip()
+
+        # Remove done(...) wrapper if the LLM returned it as a raw string
+        text = re.sub(r'^done\((.+)\)$', r'\1', text).strip()
         
         # Truncate to 500 chars
         if len(text) > 500:
