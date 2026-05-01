@@ -1121,7 +1121,7 @@ class BrowserAgent:
         text = re.sub(r'\s*(?:Let me|I hope|I believe|This should|Hopefully).*$', '', text, flags=re.IGNORECASE).strip()
         
         # Remove tool call artifacts (MiniMax sometimes emits [TOOL_CALL] blocks)
-        text = re.sub(r'\[TOOL_CALL\]\s*\{[^}]*\}', '', text, flags=re.DOTALL).strip()
+        text = re.sub(r'\[TOOL_CALL\][\s\S]*?$', '', text, flags=re.MULTILINE).strip()
         text = re.sub(r'\[TOOL_CALL\]', '', text).strip()
         
         # Truncate to 500 chars
