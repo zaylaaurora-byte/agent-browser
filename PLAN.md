@@ -66,11 +66,12 @@ src/components/agent/
 Keep `src/components/agent-browser.tsx` as a barrel re-export for zero-breaking changes.
 
 **2.2 Empty States & Skeleton Loaders**
-Current empty states are flat text ("No activity yet", "Execute a task to see the browser"). Replace with:
-- Animated skeleton loaders for the activity feed during first 2 seconds of a run
-- A branded empty state illustration for when no task has been run yet
-- A "session expired" empty state if the user navigates back after a long gap
-- Use framer-motion stagger for entrance animations on skeleton items
+**2.2 — Empty States & Skeleton Loaders** ✅
+- Activity feed branded empty state with custom SVG browser icon + orbit animation
+- Session-expired empty state component (`SessionExpiredFeed`) exported for future use
+- Thinking panel branded empty state with brain SVG icon
+- Animated skeleton loaders (3 staggered cards) during first 3 steps of a run
+- Framer-motion stagger on skeleton card entrances
 
 **2.3 Screenshot Viewer — Full Lightbox**
 Currently screenshots are only visible as tiny 80px thumbnails in step cards and 16:9 in the main viewport. Add:
@@ -279,9 +280,11 @@ Currently only runs locally via Playwright. Add cloud browser options:
 - `agent-browser.tsx` is now a barrel re-export (zero-breaking change)
 - TypeScript: zero errors
 
-**2.2 — Empty states** ✅
-- Activity feed empty state now shows "Press `?` for shortcuts" hint
-- Branded empty states for browser viewport and thinking panel
+**2.2 — Empty States & Skeleton Loaders** ✅
+- Activity feed branded empty state with custom SVG browser icon + orbit animation
+- Session-expired empty state component (`SessionExpiredFeed`) exported for future use
+- Thinking panel branded empty state with brain SVG icon
+- Animated skeleton loaders (3 staggered cards) during first 3 steps of a run
 
 **2.4 — Screenshot lightbox** ✅
 - Click main screenshot → full lightbox modal

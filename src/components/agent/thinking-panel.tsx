@@ -53,10 +53,30 @@ export function ThinkingPanel({ steps, latestThinking, isRunning, thinkingRef }:
           className="h-[170px] sm:h-[190px] overflow-y-auto p-3 space-y-2"
         >
           {thinkingSteps.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <p className="text-[11px] text-zinc-700 uppercase tracking-widest text-center px-4">
-                {isRunning ? "Agent is reasoning…" : "Execute a task to see live reasoning"}
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              {/* Branded thinking icon */}
+              <div className="relative">
+                <div className="w-12 h-12 rounded-2xl border border-zinc-800/50 flex items-center justify-center bg-zinc-900/50">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="text-zinc-700">
+                    <path d="M12 3C7.5 3 4 6 4 10c0 2.5 1.5 4.5 3.5 5.5L7 22h10l-.5-6.5C18.5 14.5 20 12.5 20 10c0-4-3.5-7-8-7z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                    <path d="M9 22h6M12 17v5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                {isRunning && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-violet-600/70 border-2 border-zinc-950"
+                    style={{ animation: "pulse-dot 1.2s ease-in-out infinite" }}
+                  />
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-700 uppercase tracking-widest text-center">
+                {isRunning ? "Agent is reasoning…" : "No reasoning yet"}
               </p>
+              {!isRunning && (
+                <p className="text-[10px] text-zinc-800 text-center px-2">
+                  Execute a task to see live reasoning
+                </p>
+              )}
             </div>
           ) : (
             thinkingSteps.map((step, i) => {

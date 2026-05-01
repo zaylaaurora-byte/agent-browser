@@ -234,6 +234,7 @@ export function AgentBrowser() {
               completedSteps={completedSteps} failedSteps={failedSteps}
               expandedSteps={expandedSteps} setExpandedSteps={setExpandedSteps}
               feedRef={feedRef}
+              sessionExpired={false}
             />
           </div>
         </div>
