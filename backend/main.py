@@ -229,7 +229,7 @@ async def execute_task(req: TaskRequest):
 @app.websocket("/ws/agent")
 async def websocket_agent(ws: WebSocket):
     """WebSocket for real-time agent interaction. Sessions are tracked server-side."""
-    await ws.accept()
+    await ws.accept(max_size=10_000_000)
     agent = None
     current_session_id = None
 

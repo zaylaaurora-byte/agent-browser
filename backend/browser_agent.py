@@ -1306,14 +1306,27 @@ class BrowserAgent:
         return result
 
     async def _take_screenshot(self) -> str:
-        """Take screenshot and return base64"""
+        """Take screenshot and return base64 (JPEG, max ~200KB to fit WebSocket frame limits)"""
         if self.page:
             try:
+                # Use JPEG for compression (10x smaller than PNG), cap to ~200KB base64
                 ss = await asyncio.wait_for(
-                    self.page.screenshot(type="png", full_page=False),
-                    timeout=10.0
+                    self.page.screenshot(type="jpeg", quality=70, full_page=False,
+                                         timeout=10.0),
+                    timeout=12.0
                 )
-                return base64.b64encode(ss).decode()
+                b64 = base64.b64encode(ss).decode()
+                # WebSocket frame default max is 1MB; keep well under with other JSON fields
+                if len(b64) > 800_000:
+                    # Downscale further
+                    import io
+                    from PIL import Image
+                    img = Image.open(io.BytesIO(ss))
+                    img.thumbnail((1024, 768), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    img.save(buf, format="JPEG", quality=60)
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                return b64
             except asyncio.TimeoutError:
                 return ""
             except Exception:
