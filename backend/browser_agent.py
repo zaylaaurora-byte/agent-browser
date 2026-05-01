@@ -13,6 +13,8 @@ from datetime import datetime
 
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
+from proxy_manager import ProxyManager
+
 logger = logging.getLogger(__name__)
 
 # ── Realistic screen/profile pools ─────────────────────────────────────────
@@ -88,6 +90,79 @@ STEALTH_JS = """
     '__selenium_unwrapped','__webdriver_unwrapped','__fxdriver_evaluate',
     '__fxdriver_unwrapped','fxdriver_id','cachedFramebot'
   );
+
+  // ─── WebRTC leak blocking ────────────────────────────────────────────────
+  // Block all WebRTC ICE candidates from leaking local IP
+  if (typeof RTCPeerConnection !== 'undefined') {
+    const _origRTC = RTCPeerConnection.bind(RTCPeerConnection);
+    RTCPeerConnection = function(pcConfig, pcConstraints) {
+      const pc = new _origRTC(pcConfig, pcConstraints);
+      const _origAddIceCandidate = pc.addIceCandidate.bind(pc);
+      pc.addIceCandidate = function(candidate) {
+        // Drop any candidates that expose the real local IP
+        if (candidate && candidate.candidate &&
+            (candidate.candidate.includes('host') || candidate.candidate.includes('srflx'))) {
+          return Promise.resolve();
+        }
+        return _origAddIceCandidate(candidate);
+      };
+      const _origCreateOffer = pc.createOffer.bind(pc);
+      pc.createOffer = function() {
+        return _origCreateOffer().then(offer => {
+          // Strip m= lines that expose internal candidates in SDP
+          const sdp = offer.sdp.replace(/a=candidate:[^\r\n]+(host|srflx)[^\r\n]+/g, '');
+          return Object.assign(offer, { sdp });
+        });
+      };
+      return pc;
+    };
+    // Expose the original constructor for legitimate use
+    window.RTCPeerConnection = RTCPeerConnection;
+    window.webkitRTCPeerConnection = window.RTCPeerConnection;
+    window.mozRTCPeerConnection = window.RTCPeerConnection;
+  }
+
+  // ─── WebRTC getUserMedia — fake camera/mic to avoid permission prompts exposing hardware ─
+  if (typeof navigator.mediaDevices !== 'undefined') {
+    const _origGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = function(constraints) {
+      // Return a silent audio + blank video track to avoid hardware enumeration
+      const fakeStream = {
+        getAudioTracks: () => [],
+        getVideoTracks: () => [{
+          kind: 'video',
+          label: 'Camera',
+          enabled: false,
+          on: () => {}, off: () => {},
+          addEventListener: () => {}, removeEventListener: () => {},
+        }],
+        getTracks: () => [],
+        active: false,
+        addEventListener: () => {}, removeEventListener: () => {},
+      };
+      return Promise.resolve(fakeStream);
+    };
+  }
+
+  // ─── WebRTC getDisplayMedia — block screen capture by default ─────────────
+  if (typeof navigator.mediaDevices !== 'undefined' && navigator.mediaDevices.getDisplayMedia) {
+    const _origGSMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getDisplayMedia = function() {
+      // Redirect to getUserMedia fake stream instead of real screen capture
+      const fakeDisplay = {
+        getVideoTracks: () => [{
+          kind: 'video', label: 'Screen Capture', enabled: false,
+          on: () => {}, off: () => {},
+          addEventListener: () => {}, removeEventListener: () => {},
+        }],
+        getAudioTracks: () => [],
+        getTracks: () => [],
+        active: false,
+        addEventListener: () => {}, removeEventListener: () => {},
+      };
+      return Promise.resolve(fakeDisplay);
+    };
+  }
   // Seal against re-injection
   ['__webdriver','__selenium','__webdriver__','__selenium__','__driver_evaluate',
    '__webdriver_evaluate','__fxdriver_evaluate'].forEach(p => {
@@ -99,9 +174,9 @@ STEALTH_JS = """
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
   } catch(_) {}
 
-  // ─── Window dimensions (headless: outerWidth === innerWidth, gives it away) ─
-  try { Object.defineProperty(window, 'outerWidth',  { get: () => window.innerWidth + 16 }); } catch(_) {}
-  try { Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 92 }); } catch(_) {}
+  // ─── Window dimensions (set per-session from Python to include jitter) ──
+  // NOTE: outerWidth/outerHeight are injected dynamically per-session above STEALTH_JS.
+  // See _init_browser where add_init_script appends: Object.defineProperty(window,'outerWidth',  {get:()=>vp_w})
   try { Object.defineProperty(window, 'screenX', { get: () => 0 }); } catch(_) {}
   try { Object.defineProperty(window, 'screenY', { get: () => 0 }); } catch(_) {}
 
@@ -208,20 +283,40 @@ STEALTH_JS = """
       : _origPQ(params);
   try { Object.defineProperty(Notification, 'permission', { get: () => 'default' }); } catch(_) {}
 
-  // ─── WebGL — consistent Intel fingerprint ────────────────────────────────
+  // ─── WebGL — randomized GPU fingerprint ────────────────────────────────
+  const _gpuPool = [
+    ['Intel Inc.', 'Intel(R) Iris(TM) Plus Graphics 640'],
+    ['Intel Inc.', 'Intel(R) UHD Graphics 620'],
+    ['Intel Inc.', 'Intel(R) UHD Graphics 630'],
+    ['Intel Inc.', 'Intel(R) HD Graphics 620'],
+    ['Intel Inc.', 'Intel(R) HD Graphics 5500'],
+    ['Intel Inc.', 'Intel(R) HD Graphics 4600'],
+    ['Intel Inc.', 'Intel(R) HD Graphics 4000'],
+    ['NVIDIA Corporation', 'GeForce GTX 1060 3GB/PCIe/SSE2'],
+    ['NVIDIA Corporation', 'GeForce GTX 1050 Ti/PCIe/SSE2'],
+    ['NVIDIA Corporation', 'GeForce RTX 2060/PCIe/SSE2'],
+    ['NVIDIA Corporation', 'GeForce MX150/PCIe/SSE2'],
+    ['AMD', 'AMD Radeon Pro 555X'],
+    ['AMD', 'AMD Radeon RX 580 Series'],
+    ['Apple Inc.', 'Apple M1'],
+    ['Apple Inc.', 'Apple M2'],
+    ['Apple Inc.', 'Apple GPU'],
+  ];
+  const [_gpuVendor, _gpuRenderer] = _gpuPool[Math.floor(Math.random() * _gpuPool.length)];
+
   const _gl1 = WebGLRenderingContext.prototype;
   const _ogp1 = _gl1.getParameter.bind(_gl1);
   _gl1.getParameter = function(p) {
-    if (p === 37445) return 'Intel Inc.';
-    if (p === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
+    if (p === 37445) return _gpuVendor;
+    if (p === 37446) return _gpuRenderer;
     return _ogp1.call(this, p);
   };
   if (typeof WebGL2RenderingContext !== 'undefined') {
     const _gl2 = WebGL2RenderingContext.prototype;
     const _ogp2 = _gl2.getParameter.bind(_gl2);
     _gl2.getParameter = function(p) {
-      if (p === 37445) return 'Intel Inc.';
-      if (p === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
+      if (p === 37445) return _gpuVendor;
+      if (p === 37446) return _gpuRenderer;
       return _ogp2.call(this, p);
     };
   }
@@ -265,7 +360,18 @@ SYSTEM_PROMPT = open(os.path.join(os.path.dirname(__file__), "prompts", "system.
 
 
 class BrowserAgent:
-    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
+        *,
+        proxy_provider: str = "generic",
+        proxy_api_key: Optional[str] = None,
+        proxy_zone: str = "residential",
+        proxy_country: str = "us",
+        proxy_url: Optional[str] = None,
+        proxy_rotate_every: int = 20,
+    ):
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         self.model_name = model_name or os.getenv("AI_MODEL", "MiniMax-M2.7")
         self.playwright = None
@@ -276,6 +382,16 @@ class BrowserAgent:
         self.conversation_history: list = []
         self._camoufox_ctx = None   # holds camoufox context manager for cleanup
         self._browser_engine = "chromium"
+
+        # Proxy rotation
+        self.proxy_manager = ProxyManager(
+            provider=proxy_provider,
+            api_key=proxy_api_key,
+            zone=proxy_zone,
+            country=proxy_country,
+            proxy_url=proxy_url,
+            rotate_every=proxy_rotate_every,
+        )
 
     def _build_ai_messages(self, task: str, page_content: str, screenshot_b64: str = None) -> list:
         """Build messages for AI including conversation history and optional screenshot for vision."""
@@ -359,6 +475,18 @@ class BrowserAgent:
         profile = random.choice(_PROFILES)
         screen  = random.choice(_SCREEN_SIZES)
 
+        # ── Viewport & screen randomization ─────────────────────────────────
+        # Add ±20px jitter to both dimensions so each session is unique
+        # without deviating from realistic browser sizes
+        vp_w = screen["width"]  + random.randint(-20, 20)
+        vp_h = screen["height"] + random.randint(-20, 20)
+        # Clamp to physically plausible ranges
+        vp_w = max(1024, min(3840, vp_w))
+        vp_h = max(576,  min(2160, vp_h))
+        # Screen dimensions (physical monitor) are slightly larger than viewport
+        scr_w = vp_w + random.randint(0, 64)
+        scr_h = vp_h + random.randint(40, 120)
+
         # ── Tier 1: camoufox with virtual display (Xvfb) ──────────────────────
         try:
             from camoufox.async_api import AsyncCamoufox
@@ -432,8 +560,8 @@ class BrowserAgent:
             })
         else:
             self.context = await self.browser.new_context(
-                viewport={"width": screen["width"], "height": screen["height"]},
-                screen={"width": screen["width"], "height": screen["height"]},
+                viewport={"width": vp_w, "height": vp_h},
+                screen={"width": scr_w, "height": scr_h},
                 locale=profile["locale"],
                 timezone_id=profile["timezone_id"],
                 user_agent=random.choice(USER_AGENTS),
@@ -451,8 +579,12 @@ class BrowserAgent:
                 },
             )
             self.page = await self.context.new_page()
-            # Inject on every new document
-            await self.context.add_init_script(STEALTH_JS)
+            # Inject on every new document — pass viewport dims from Python layer
+            await self.context.add_init_script(
+                STEALTH_JS +
+                f"\nObject.defineProperty(window,'outerWidth',  {{get:()=>{vp_w}}})"
+                f"\nObject.defineProperty(window,'outerHeight', {{get:()=>{vp_h}}})"
+            )
 
         self.page.set_default_timeout(15000)
         self.page.set_default_navigation_timeout(30000)
