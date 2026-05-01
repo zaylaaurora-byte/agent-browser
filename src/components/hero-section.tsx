@@ -2,88 +2,63 @@
 
 import { useRef } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { ChevronDown } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 
-const FEATURES = [
-  { dot: "bg-violet-500", label: "3 Agent Modes" },
-  { dot: "bg-cyan-500",   label: "Live Streaming" },
-  { dot: "bg-emerald-500",label: "Stealth Ready"  },
+const PILLS = [
+  { color: "bg-violet-500", label: "3 Agent Modes"  },
+  { color: "bg-cyan-500",   label: "Live Streaming" },
+  { color: "bg-emerald-500",label: "Stealth Ready"  },
 ];
 
 export function HeroSection() {
   const ref = useRef<HTMLDivElement>(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ["start start", "end start"],
-  });
-
-  const y       = useTransform(scrollYProgress, [0, 1], ["0%", "35%"]);
-  const opacity = useTransform(scrollYProgress, [0, 0.75], [1, 0]);
-  const scale   = useTransform(scrollYProgress, [0, 0.75], [1, 0.96]);
-
-  const scrollToAgent = () => {
-    document.getElementById("agent-section")?.scrollIntoView({ behavior: "smooth" });
-  };
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
+  const y       = useTransform(scrollYProgress, [0, 1], ["0%", "32%"]);
+  const opacity = useTransform(scrollYProgress, [0, 0.7], [1, 0]);
+  const scale   = useTransform(scrollYProgress, [0, 0.7], [1, 0.97]);
 
   return (
-    <div
-      ref={ref}
-      className="relative h-[46vh] min-h-[340px] sm:min-h-[400px] overflow-hidden flex items-center justify-center"
-    >
-      {/* Parallax background orbs */}
+    <div ref={ref} className="relative h-[46vh] min-h-[320px] sm:min-h-[380px] overflow-hidden flex items-center justify-center">
+      {/* Orbs */}
       <motion.div style={{ y }} className="absolute inset-0 pointer-events-none select-none">
-        <div
-          className="absolute top-[8%] left-[10%] w-[360px] sm:w-[520px] h-[360px] sm:h-[520px] rounded-full bg-violet-600/12 blur-[100px] sm:blur-[120px]"
-          style={{ animation: "float 9s ease-in-out infinite" }}
-        />
-        <div
-          className="absolute bottom-[0%] right-[5%] w-[280px] sm:w-[420px] h-[280px] sm:h-[420px] rounded-full bg-cyan-500/8 blur-[80px] sm:blur-[110px]"
-          style={{ animation: "float-delayed 11s ease-in-out infinite" }}
-        />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-fuchsia-600/6 blur-[140px]" />
+        <div className="absolute top-[5%] left-[8%] w-[320px] sm:w-[500px] h-[320px] sm:h-[500px] rounded-full bg-violet-700/10 blur-[90px] sm:blur-[110px]"
+          style={{ animation: "float 10s ease-in-out infinite" }} />
+        <div className="absolute bottom-[-5%] right-[5%] w-[260px] sm:w-[400px] h-[260px] sm:h-[400px] rounded-full bg-cyan-500/7 blur-[80px] sm:blur-[100px]"
+          style={{ animation: "float-b 12s ease-in-out infinite" }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[460px] h-[460px] rounded-full bg-fuchsia-700/5 blur-[120px]" />
       </motion.div>
 
-      {/* Noise texture */}
-      <div
-        className="absolute inset-0 opacity-[0.025] pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        }}
-      />
+      {/* Grid */}
+      <div className="absolute inset-0 opacity-[0.016] pointer-events-none"
+        style={{ backgroundImage: "linear-gradient(rgba(255,255,255,0.07) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.07) 1px,transparent 1px)", backgroundSize: "52px 52px" }} />
 
-      {/* Grid overlay */}
-      <div
-        className="absolute inset-0 opacity-[0.018] pointer-events-none"
-        style={{
-          backgroundImage: `linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)`,
-          backgroundSize: "56px 56px",
-        }}
-      />
+      {/* Noise */}
+      <div className="absolute inset-0 opacity-[0.022] pointer-events-none"
+        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")" }} />
 
       {/* Content */}
-      <motion.div style={{ opacity, scale }} className="relative z-10 text-center px-5 sm:px-8 w-full max-w-3xl mx-auto">
+      <motion.div style={{ opacity, scale }} className="relative z-10 text-center px-4 sm:px-8 w-full max-w-3xl mx-auto">
 
-        {/* Status badge */}
+        {/* Badge */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full glass-surface mb-6 sm:mb-8"
+          transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
+          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full glass-surface mb-5 sm:mb-7"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]" />
-          <span className="text-[10px] sm:text-[11px] text-zinc-400 font-semibold tracking-widest uppercase">
-            AI-Powered Browser Automation
-          </span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ animation: "pulse-dot 2s ease-in-out infinite" }} />
+          <span className="text-[10px] sm:text-[11px] text-zinc-400 font-semibold tracking-widest uppercase">AI-Powered Browser Automation</span>
         </motion.div>
 
-        {/* Title */}
+        {/* Heading */}
         <motion.h1
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.08, ease: [0.16, 1, 0.3, 1] }}
-          className="text-5xl sm:text-7xl md:text-8xl font-black tracking-tight mb-4 sm:mb-6 leading-[0.92]"
+          transition={{ duration: 0.65, delay: 0.07, ease: [0.16, 1, 0.3, 1] }}
+          className="font-black tracking-tight leading-[0.9] mb-4 sm:mb-5"
+          style={{ fontSize: "clamp(2.8rem, 8vw, 5.5rem)" }}
         >
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-zinc-200 to-zinc-400">
+          <span className="text-transparent bg-clip-text bg-gradient-to-br from-white via-zinc-100 to-zinc-400">
             Agent
           </span>
           <br />
@@ -92,43 +67,38 @@ export function HeroSection() {
 
         {/* Tagline */}
         <motion.p
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.16, ease: [0.16, 1, 0.3, 1] }}
-          className="text-zinc-500 text-base sm:text-lg max-w-md mx-auto mb-8 sm:mb-10 leading-relaxed"
-        >
-          Watch AI agents navigate the web in real-time. Fill forms, extract data,
-          automate workflows — with live reasoning.
-        </motion.p>
-
-        {/* Feature dots + CTA */}
-        <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6"
+          transition={{ duration: 0.65, delay: 0.14, ease: [0.16, 1, 0.3, 1] }}
+          className="text-zinc-500 text-base sm:text-lg max-w-sm sm:max-w-md mx-auto mb-7 sm:mb-9 leading-relaxed"
         >
-          <div className="flex items-center gap-4 sm:gap-6">
-            {FEATURES.map((f) => (
-              <div key={f.label} className="flex items-center gap-1.5 text-[11px] sm:text-[12px] text-zinc-600">
-                <span className={`w-1.5 h-1.5 rounded-full ${f.dot} flex-shrink-0`} />
-                <span>{f.label}</span>
-              </div>
-            ))}
-          </div>
+          Watch AI agents navigate the web in real-time — fill forms, extract data, automate workflows.
+        </motion.p>
 
+        {/* Pills + CTA */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.65, delay: 0.21, ease: [0.16, 1, 0.3, 1] }}
+          className="flex flex-wrap items-center justify-center gap-4 sm:gap-6"
+        >
+          {PILLS.map((p) => (
+            <div key={p.label} className="flex items-center gap-1.5 text-[11px] text-zinc-600">
+              <span className={`w-1.5 h-1.5 rounded-full ${p.color} flex-shrink-0`} />
+              {p.label}
+            </div>
+          ))}
           <button
-            onClick={scrollToAgent}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl glass-surface text-[11px] text-zinc-400 hover:text-zinc-200 font-semibold tracking-wider transition-all hover:border-violet-500/30 active:scale-95"
+            onClick={() => document.getElementById("agent-section")?.scrollIntoView({ behavior: "smooth" })}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl glass-surface text-[11px] text-zinc-400 hover:text-zinc-200 font-semibold tracking-wide transition-all hover:border-violet-500/25 active:scale-95"
           >
-            Launch Agent
-            <ChevronDown className="w-3.5 h-3.5" />
+            Launch Agent <ArrowDown className="w-3.5 h-3.5" />
           </button>
         </motion.div>
       </motion.div>
 
-      {/* Bottom gradient */}
-      <div className="absolute bottom-0 left-0 right-0 h-28 bg-gradient-to-t from-[#060609] to-transparent pointer-events-none" />
+      {/* Bottom fade */}
+      <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#07070d] to-transparent pointer-events-none" />
     </div>
   );
 }

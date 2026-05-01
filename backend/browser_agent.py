@@ -6,6 +6,7 @@ import base64
 import random
 import time
 import logging
+from functools import partial
 from typing import AsyncGenerator, Optional
 from datetime import datetime
 
@@ -13,147 +14,250 @@ from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 logger = logging.getLogger(__name__)
 
-# Stealth browser arguments
+# ── Realistic screen/profile pools ─────────────────────────────────────────
+_SCREEN_SIZES = [
+    {"width": 1920, "height": 1080},
+    {"width": 1440, "height": 900},
+    {"width": 1366, "height": 768},
+    {"width": 2560, "height": 1440},
+    {"width": 1536, "height": 864},
+    {"width": 1280, "height": 800},
+]
+
+_PROFILES = [
+    {"locale": "en-US", "timezone_id": "America/New_York",   "os": "windows"},
+    {"locale": "en-US", "timezone_id": "America/Chicago",    "os": "windows"},
+    {"locale": "en-US", "timezone_id": "America/Los_Angeles","os": "macos"},
+    {"locale": "en-GB", "timezone_id": "Europe/London",      "os": "windows"},
+    {"locale": "en-AU", "timezone_id": "Australia/Sydney",   "os": "macos"},
+    {"locale": "en-CA", "timezone_id": "America/Toronto",    "os": "windows"},
+]
+
+# Stealth Chrome launch args (Chromium fallback only)
 STEALTH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-dev-shm-usage",
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-web-security",
-    "--window-size=1920,1080",
+    "--disable-features=IsolateOrigins,site-per-process",
     "--start-maximized",
     "--disable-infobars",
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
+    "--no-first-run",
+    "--no-service-autorun",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--disable-default-apps",
+    "--disable-component-update",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    "--mute-audio",
+    "--disable-gpu",
+    "--lang=en-US,en",
+    "--disable-ipc-flooding-protection",
+    "--metrics-recording-only",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-sync",
 ]
 
-# Realistic user agents (rotate)
+# Realistic Chrome user agents (used only for Chromium fallback)
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.7049.115 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15",
 ]
 
 STEALTH_JS = """
-    // ── Remove webdriver flag ────────────────────────────────────────────────
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+(function() {
+  // ─── Erase all automation / Playwright / Selenium / CDP traces ───────────
+  const _rm = (obj, ...keys) => keys.forEach(k => { try { delete obj[k]; } catch(_) {} });
+  _rm(window,
+    '__playwright','__pw_manual','_playwrightCommandCounts','__playwright_evaluation_script',
+    '__playwright__','__pw_clock',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Array','cdc_adoQpoasnfa76pfcZLmcfl_Promise',
+    'cdc_adoQpoasnfa76pfcZLmcfl_Symbol',
+    '__webdriver_evaluate','__selenium_evaluate','__webdriver_script_function',
+    '__webdriver_script_func','__webdriver_script_atoms','_selenium',
+    '__selenium_unwrapped','__webdriver_unwrapped','__fxdriver_evaluate',
+    '__fxdriver_unwrapped','fxdriver_id','cachedFramebot'
+  );
+  // Seal against re-injection
+  ['__webdriver','__selenium','__webdriver__','__selenium__','__driver_evaluate',
+   '__webdriver_evaluate','__fxdriver_evaluate'].forEach(p => {
+    try { Object.defineProperty(window, p, { get: () => undefined, configurable: false }); } catch(_) {}
+  });
 
-    // ── Fake plugins ───────────────────────────────────────────────────────
-    Object.defineProperty(navigator, 'plugins', {
-        get: () => {
-            const plugins = [
-                { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
-                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
-                { name: 'Native Client', filename: 'internal-nacl-plugin' },
-            ];
-            plugins.length = 3;
-            return plugins;
-        }
+  // ─── navigator.webdriver ─────────────────────────────────────────────────
+  try {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
+  } catch(_) {}
+
+  // ─── Window dimensions (headless: outerWidth === innerWidth, gives it away) ─
+  try { Object.defineProperty(window, 'outerWidth',  { get: () => window.innerWidth + 16 }); } catch(_) {}
+  try { Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight + 92 }); } catch(_) {}
+  try { Object.defineProperty(window, 'screenX', { get: () => 0 }); } catch(_) {}
+  try { Object.defineProperty(window, 'screenY', { get: () => 0 }); } catch(_) {}
+
+  // ─── Screen dimensions ───────────────────────────────────────────────────
+  try { Object.defineProperty(screen, 'availWidth',  { get: () => screen.width }); } catch(_) {}
+  try { Object.defineProperty(screen, 'availHeight', { get: () => screen.height - 40 }); } catch(_) {}
+  try { Object.defineProperty(screen, 'availLeft',   { get: () => 0 }); } catch(_) {}
+  try { Object.defineProperty(screen, 'availTop',    { get: () => 0 }); } catch(_) {}
+  try { Object.defineProperty(screen, 'colorDepth',  { get: () => 24 }); } catch(_) {}
+  try { Object.defineProperty(screen, 'pixelDepth',  { get: () => 24 }); } catch(_) {}
+
+  // ─── navigator properties ─────────────────────────────────────────────────
+  try { Object.defineProperty(navigator, 'vendor',              { get: () => 'Google Inc.' }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'platform',            { get: () => 'Win32' }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'languages',           { get: () => ['en-US', 'en'] }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'deviceMemory',        { get: () => 8 }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'maxTouchPoints',      { get: () => 0 }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'doNotTrack',          { get: () => null }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'cookieEnabled',       { get: () => true }); } catch(_) {}
+
+  // ─── navigator.connection ────────────────────────────────────────────────
+  const _conn = { effectiveType: '4g', downlink: 8.9, rtt: 48, saveData: false,
+    type: 'wifi', onchange: null, addEventListener: () => {}, removeEventListener: () => {} };
+  try { Object.defineProperty(navigator, 'connection',       { get: () => _conn }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'mozConnection',    { get: () => undefined }); } catch(_) {}
+  try { Object.defineProperty(navigator, 'webkitConnection', { get: () => undefined }); } catch(_) {}
+
+  // ─── Battery API ─────────────────────────────────────────────────────────
+  if (!navigator.getBattery) {
+    navigator.getBattery = () => Promise.resolve({
+      charging: true, chargingTime: 0, dischargingTime: Infinity,
+      level: 0.88 + Math.random() * 0.12,
+      addEventListener: () => {}, removeEventListener: () => {}
     });
+  }
 
-    // ── Fake languages ─────────────────────────────────────────────────────
-    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+  // ─── Plugins — real Chrome has exactly these three ───────────────────────
+  const _pd = [
+    { name:'Chrome PDF Plugin',  filename:'internal-pdf-viewer', description:'Portable Document Format' },
+    { name:'Chrome PDF Viewer',  filename:'mhjfbmdgcfjbbpaeojofohoefgiehjai', description:'' },
+    { name:'Native Client',      filename:'internal-nacl-plugin', description:'' },
+  ];
+  const _pl = Object.assign([], {
+    item:      i    => _pd[i] || null,
+    namedItem: name => _pd.find(p => p.name === name) || null,
+    refresh:   ()   => {},
+  });
+  _pd.forEach((p, i) => { _pl[i] = p; });
+  try { Object.defineProperty(navigator, 'plugins', { get: () => _pl }); } catch(_) {}
 
-    // ── Fake Chrome runtime ────────────────────────────────────────────────
-    window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
+  // ─── MimeTypes ───────────────────────────────────────────────────────────
+  const _md = [
+    { type:'application/pdf', suffixes:'pdf', description:'Portable Document Format' },
+    { type:'application/x-google-chrome-pdf', suffixes:'pdf', description:'Portable Document Format' },
+    { type:'application/x-nacl',  suffixes:'', description:'Native Client Executable' },
+    { type:'application/x-pnacl', suffixes:'', description:'Portable Native Client Executable' },
+  ];
+  const _mt = Object.assign([], {
+    item:      i => _md[i] || null,
+    namedItem: n => _md.find(m => m.type === n) || null,
+  });
+  _md.forEach((m, i) => { _mt[i] = m; });
+  try { Object.defineProperty(navigator, 'mimeTypes', { get: () => _mt }); } catch(_) {}
 
-    // ── Fake permissions ───────────────────────────────────────────────────
-    const originalQuery = window.navigator.permissions.query;
-    window.navigator.permissions.query = (parameters) =>
-        parameters.name === 'notifications'
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery(parameters);
+  // ─── window.chrome (full real object) ────────────────────────────────────
+  window.chrome = {
+    app: {
+      isInstalled: false,
+      getDetails: () => null,
+      getIsInstalled: () => false,
+      InstallState: { DISABLED:'disabled', INSTALLED:'installed', NOT_INSTALLED:'not_installed' },
+      RunningState: { CANNOT_RUN:'cannot_run', READY_TO_RUN:'ready_to_run', RUNNING:'running' },
+    },
+    runtime: {
+      id: undefined,
+      OnInstalledReason: { CHROME_UPDATE:'chrome_update', INSTALL:'install',
+        SHARED_MODULE_UPDATE:'shared_module_update', UPDATE:'update' },
+      PlatformArch: { ARM:'arm', ARM64:'arm64', X86_32:'x86-32', X86_64:'x86-64' },
+      PlatformOs:   { ANDROID:'android', CROS:'cros', LINUX:'linux', MAC:'mac', WIN:'win' },
+      RequestUpdateCheckStatus: { NO_UPDATE:'no_update', THROTTLED:'throttled', UPDATE_AVAILABLE:'update_available' },
+    },
+    loadTimes: function() {
+      return {
+        commitLoadTime: Date.now()/1000 - 0.4 - Math.random()*0.3,
+        connectionInfo: 'h2', finishDocumentLoadTime: 0, finishLoadTime: 0,
+        firstPaintAfterLoadTime: 0, firstPaintTime: 0,
+        navigationType: 'Other', npnNegotiatedProtocol: 'h2',
+        requestTime: Date.now()/1000 - 0.9, startLoadTime: Date.now()/1000 - 0.7,
+        wasAlternateProtocolAvailable: false, wasFetchedViaSpdy: true, wasNpnNegotiated: true,
+      };
+    },
+    csi: function() {
+      return { onloadT: Date.now(), pageT: 4800 + Math.random()*2000,
+               startE: Date.now() - 5000, tran: 15 };
+    },
+  };
 
-    // ── WebGL fingerprint spoofing (Phase 3.4) ─────────────────────────────
-    const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-        // UNMASKED_RENDERER_WEBGL
-        if (parameter === 37445) return 'Intel Inc.';
-        // UNMASKED_VENDOR_WEBGL
-        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-        return originalGetParameter.call(this, parameter);
+  // ─── Permissions ─────────────────────────────────────────────────────────
+  const _origPQ = window.navigator.permissions.query.bind(window.navigator.permissions);
+  window.navigator.permissions.query = (params) =>
+    params.name === 'notifications'
+      ? Promise.resolve({ state: (typeof Notification !== 'undefined' ? Notification.permission : 'default') })
+      : _origPQ(params);
+  try { Object.defineProperty(Notification, 'permission', { get: () => 'default' }); } catch(_) {}
+
+  // ─── WebGL — consistent Intel fingerprint ────────────────────────────────
+  const _gl1 = WebGLRenderingContext.prototype;
+  const _ogp1 = _gl1.getParameter.bind(_gl1);
+  _gl1.getParameter = function(p) {
+    if (p === 37445) return 'Intel Inc.';
+    if (p === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
+    return _ogp1.call(this, p);
+  };
+  if (typeof WebGL2RenderingContext !== 'undefined') {
+    const _gl2 = WebGL2RenderingContext.prototype;
+    const _ogp2 = _gl2.getParameter.bind(_gl2);
+    _gl2.getParameter = function(p) {
+      if (p === 37445) return 'Intel Inc.';
+      if (p === 37446) return 'Intel(R) Iris(TM) Plus Graphics 640';
+      return _ogp2.call(this, p);
     };
+  }
 
-    // Spoof WebGL2 renderer
-    const ext = document.createElement('canvas').getContext('webgl2').getExtension('WEBGL_debug_renderer_info');
-    if (ext) {
-        try {
-            const gl = document.createElement('canvas').getContext('webgl2');
-            gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
-        } catch(e) {}
-    }
-
-    // ── Canvas fingerprint spoofing (Phase 3.4) ─────────────────────────────
-    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+  // ─── Canvas noise (subtle per-session, defeats fingerprinting) ───────────
+  const _ns = (Math.random() * 0xFF | 0);
+  const _orig_tdu = HTMLCanvasElement.prototype.toDataURL;
+  HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
+    if (this.width > 16 && this.height > 16) {
+      try {
         const ctx = this.getContext('2d');
-        if (ctx) {
-            // Add slight noise to canvas pixels to defeat automated fingerprinting
-            try {
-                const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                const data = imageData.data;
-                for (let i = 0; i < data.length; i += 4) {
-                    data[i]     = data[i]     ^ (Math.random() < 0.5 ? 1 : 0);
-                    data[i + 1] = data[i + 1] ^ (Math.random() < 0.5 ? 1 : 0);
-                    data[i + 2] = data[i + 2] ^ (Math.random() < 0.5 ? 1 : 0);
-                }
-                ctx.putImageData(imageData, 0, 0);
-            } catch(e) {}
+        if (ctx) { const d = ctx.getImageData(0,0,1,1); d.data[0]^=_ns; ctx.putImageData(d,0,0); }
+      } catch(_) {}
+    }
+    return _orig_tdu.call(this, type, quality);
+  };
+
+  // ─── Consistent Date/timing jitter (prevents timing-based detection) ─────
+  const _origNow = performance.now.bind(performance);
+  performance.now = () => _origNow() + Math.random() * 0.1;
+
+  // ─── Consistent iframe contentWindow check ────────────────────────────────
+  // Some detectors check if an injected iframe's window looks automated
+  const _origCreateEl = document.createElement.bind(document);
+  document.createElement = function(tag, ...args) {
+    const el = _origCreateEl(tag, ...args);
+    if (tag.toLowerCase() === 'iframe') {
+      Object.defineProperty(el, 'contentWindow', {
+        get: function() {
+          const cw = HTMLIFrameElement.prototype.__lookupGetter__('contentWindow').call(this);
+          return cw;
         }
-        return originalToDataURL.call(this, type, quality);
-    };
-
-    // ── AudioContext fingerprint spoofing (Phase 3.4) ────────────────────────
-    const originalCreateAnalyser = AudioContext.prototype.createAnalyser;
-    if (originalCreateAnalyser) {
-        AudioContext.prototype.createAnalyser = function() {
-            const analyser = originalCreateAnalyser.call(this);
-            try {
-                const param = analyser.frequencyBinCount;
-                Object.defineProperty(analyser, 'fftSize', {
-                    get: () => 2048,
-                    set: (v) => { /* allow */ },
-                });
-            } catch(e) {}
-            return analyser;
-        };
+      });
     }
-
-    // ── navigator.hardwareConcurrency spoofing (Phase 3.4) ──────────────────
-    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-
-    // ── deviceMemory spoofing ────────────────────────────────────────────────
-    if (navigator.deviceMemory === undefined) {
-        Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-    }
-
-    // ── Remove automation indicators ─────────────────────────────────────────
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-    delete window.__webdriver_evaluate;
-    delete window.__selenium_evaluate;
-    delete window.__webdriver_script_function;
-    delete window.__webdriver_script_func;
-    delete window.__webdriver_script_atoms;
-    delete window._selenium;
-    delete window.cachedFramebot;
-
-    // ── Randomize automation flags ──────────────────────────────────────────
-    const randomProps = ['__webdriver', '__selenium', '__webdriver__', '__selenium__'];
-    randomProps.forEach(p => {
-        try {
-            if (window[p] !== undefined) {
-                Object.defineProperty(window, p, {
-                    get: () => undefined,
-                    configurable: false,
-                });
-            }
-        } catch(e) {}
-    });
+    return el;
+  };
+})();
 """
 
 SYSTEM_PROMPT = """You are a browser automation agent. You control a web browser to complete tasks.
@@ -213,6 +317,8 @@ class BrowserAgent:
         self.page: Optional[Page] = None
         self.history: list = []
         self.conversation_history: list = []
+        self._camoufox_ctx = None   # holds camoufox context manager for cleanup
+        self._browser_engine = "chromium"
 
     def _build_ai_messages(self, task: str, page_content: str) -> list:
         """Build messages for AI including conversation history"""
@@ -281,29 +387,101 @@ class BrowserAgent:
         return messages
 
     async def _init_browser(self):
-        """Initialize stealth browser"""
-        if self.playwright is None:
-            self.playwright = await async_playwright().start()
+        """3-tier stealth browser init.
 
-        if self.browser is None:
-            self.browser = await self.playwright.chromium.launch(
-                args=STEALTH_ARGS,
-                headless=True,
-                ignore_default_args=["--enable-automation"],
+        Tier 1: camoufox + Xvfb virtual display (headless=False — undetectable)
+        Tier 2: camoufox headless (Firefox, real TLS/HTTP2 fingerprint)
+        Tier 3: Chromium + comprehensive JS patches (last resort)
+        """
+        if self.browser is not None:
+            return
+
+        profile = random.choice(_PROFILES)
+        screen  = random.choice(_SCREEN_SIZES)
+
+        # ── Tier 1: camoufox with virtual display (Xvfb) ──────────────────────
+        try:
+            from camoufox.async_api import AsyncCamoufox
+            self._camoufox_ctx = AsyncCamoufox(
+                headless="virtual",   # runs real Firefox inside Xvfb — zero headless flags
+                os=profile["os"],
+                block_webrtc=True,
             )
+            self.browser = await self._camoufox_ctx.__aenter__()
+            self._browser_engine = "camoufox-virtual"
+            logger.info("Engine: camoufox/Firefox + Xvfb virtual display (tier 1)")
+        except Exception as e1:
+            logger.warning(f"Tier 1 (camoufox virtual) failed: {e1!r}")
+            self._camoufox_ctx = None
 
-        if self.context is None:
-            ua = random.choice(USER_AGENTS)
+            # ── Tier 2: camoufox headless ─────────────────────────────────────
+            try:
+                from camoufox.async_api import AsyncCamoufox
+                self._camoufox_ctx = AsyncCamoufox(
+                    headless=True,
+                    os=profile["os"],
+                    block_webrtc=True,
+                )
+                self.browser = await self._camoufox_ctx.__aenter__()
+                self._browser_engine = "camoufox"
+                logger.info("Engine: camoufox/Firefox headless (tier 2)")
+            except Exception as e2:
+                logger.warning(f"Tier 2 (camoufox headless) failed: {e2!r}")
+                self._camoufox_ctx = None
+
+                # ── Tier 3: Chromium + STEALTH_JS ─────────────────────────────
+                if self.playwright is None:
+                    self.playwright = await async_playwright().start()
+                self.browser = await self.playwright.chromium.launch(
+                    args=STEALTH_ARGS,
+                    headless=True,
+                    ignore_default_args=["--enable-automation"],
+                )
+                self._browser_engine = "chromium"
+                logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
+
+        # ── Context + page setup ───────────────────────────────────────────────
+        is_camoufox = self._browser_engine.startswith("camoufox")
+
+        if is_camoufox:
+            # camoufox owns the Firefox profile — don't override fingerprint params.
+            self.page    = await self.browser.new_page()
+            self.context = self.page.context
+            # Minimal fix: virtual display can produce outerWidth === innerWidth
+            await self.context.add_init_script("""(function(){
+  try {
+    if (window.outerWidth <= window.innerWidth) {
+      Object.defineProperty(window,'outerWidth',  {get:()=>window.innerWidth+16});
+      Object.defineProperty(window,'outerHeight', {get:()=>window.innerHeight+92});
+    }
+    ['__playwright','__pw_manual','_playwrightCommandCounts'].forEach(p=>{
+      try{delete window[p];}catch(_){}
+    });
+  } catch(_){}
+})();""")
+            await self.page.set_extra_http_headers({
+                "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+            })
+        else:
             self.context = await self.browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=ua,
-                locale="en-US",
-                timezone_id="America/New_York",
+                viewport={"width": screen["width"], "height": screen["height"]},
+                screen={"width": screen["width"], "height": screen["height"]},
+                locale=profile["locale"],
+                timezone_id=profile["timezone_id"],
+                user_agent=random.choice(USER_AGENTS),
+                color_scheme=random.choice(["dark", "light", "light"]),
                 extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                     "Accept-Encoding": "gzip, deflate, br",
-                    "Connection": "keep-alive",
                     "Upgrade-Insecure-Requests": "1",
                     "Sec-Fetch-Dest": "document",
                     "Sec-Fetch-Mode": "navigate",
@@ -311,13 +489,13 @@ class BrowserAgent:
                     "Sec-Fetch-User": "?1",
                     "Cache-Control": "max-age=0",
                 },
-                screen={"width": 1920, "height": 1080},
-                color_scheme="dark",
             )
             self.page = await self.context.new_page()
-            await self.page.add_init_script(STEALTH_JS)
-            self.page.set_default_timeout(15000)
-            self.page.set_default_navigation_timeout(30000)
+            # Inject on every new document
+            await self.context.add_init_script(STEALTH_JS)
+
+        self.page.set_default_timeout(15000)
+        self.page.set_default_navigation_timeout(30000)
 
     async def _dismiss_cookie_banner(self):
         """Auto-dismiss common cookie consent banners"""
@@ -472,6 +650,54 @@ class BrowserAgent:
     async def _human_delay(self, min_s: float = 0.5, max_s: float = 2.0):
         """Random delay mimicking human speed"""
         await asyncio.sleep(random.uniform(min_s, max_s))
+
+    async def _human_type(self, selector: str, text: str):
+        """Type text character-by-character with variable delays, rare typos+corrections."""
+        # Click / focus the field
+        try:
+            await self.page.click(selector, timeout=6000)
+        except Exception:
+            await self.page.focus(selector)
+        await asyncio.sleep(random.uniform(0.08, 0.25))
+
+        # Clear any existing value first
+        await self.page.keyboard.press("Control+a")
+        await asyncio.sleep(random.uniform(0.04, 0.10))
+        await self.page.keyboard.press("Backspace")
+        await asyncio.sleep(random.uniform(0.05, 0.12))
+
+        # Base typing speed: 45–100 ms/char (realistic human range)
+        base_ms = random.uniform(45, 100)
+
+        i = 0
+        while i < len(text):
+            char = text[i]
+
+            # 1.5% chance of a fat-finger typo on alphabetic keys
+            if random.random() < 0.015 and char.isalpha() and i > 0:
+                typo = random.choice("asdfjkl;qwerty")
+                await self.page.keyboard.type(typo)
+                await asyncio.sleep(random.uniform(0.06, 0.14))
+                await self.page.keyboard.press("Backspace")
+                await asyncio.sleep(random.uniform(0.04, 0.10))
+
+            await self.page.keyboard.type(char)
+
+            # Variable delay: pause longer after spaces/punctuation
+            if char == " ":
+                delay = random.uniform(0.07, 0.22)
+            elif char in ".,!?;:":
+                delay = random.uniform(0.10, 0.28)
+            elif char in "\n\r":
+                delay = random.uniform(0.15, 0.35)
+            else:
+                delay = (base_ms / 1000) * random.uniform(0.4, 1.9)
+
+            await asyncio.sleep(delay)
+            i += 1
+
+        # Brief settle after finishing
+        await asyncio.sleep(random.uniform(0.05, 0.15))
 
     async def _get_page_content(self) -> str:
         """Get rich structured page content for AI — includes SPA detection, selects, iframes, CAPTCHAs."""
@@ -872,6 +1098,17 @@ class BrowserAgent:
                 result["url"] = self.page.url
 
             elif action == "click":
+                # Move mouse naturally to element before clicking
+                try:
+                    el = await self.page.query_selector(arg)
+                    if el:
+                        box = await el.bounding_box()
+                        if box:
+                            cx = int(box["x"] + box["width"] * random.uniform(0.35, 0.65))
+                            cy = int(box["y"] + box["height"] * random.uniform(0.35, 0.65))
+                            await self._human_move(cx, cy)
+                except Exception:
+                    pass  # proceed without pre-move on any error
                 try:
                     # Use commit to avoid hanging on button clicks that don't navigate
                     await self.page.click(arg, wait_for_load_state="commit", timeout=5000)
@@ -912,20 +1149,12 @@ class BrowserAgent:
                     if (text.startswith('"') and text.endswith('"')) or \
                        (text.startswith("'") and text.endswith("'")):
                         text = text[1:-1]
-                    # Check if field already has content — triple-click to select all before filling
-                    # to avoid double-typing on pre-filled or re-visited fields
                     try:
-                        current_val = await self.page.eval_on_selector(selector, "el => el.value")
-                        if current_val:
-                            await self.page.click(selector)
-                            await self.page.keyboard.press("Control+a")
-                            await self.page.keyboard.type(text, delay=random.uniform(30, 80))
-                        else:
-                            await self.page.fill(selector, text, no_wait_after=True)
+                        await self._human_type(selector, text)
                     except Exception:
-                        # Fallback: just fill
+                        # Fallback: instant fill if human-type fails
                         await self.page.fill(selector, text, no_wait_after=True)
-                    await self._human_delay(0.2, 0.6)
+                    await self._human_delay(0.15, 0.4)
                     result["success"] = True
                 else:
                     result["error"] = "Invalid type format: use selector, text"
@@ -1188,7 +1417,7 @@ class BrowserAgent:
                 "status": "thinking",
                 "url": page_url,
                 "page_title": page_title_val,
-                "model": model_name,
+                "model": model_name, "engine": self._browser_engine,
                 "duration_ms": int(ai_ms),
                 "ai_reasoning": ai_response,
                 "observation": observation,
@@ -1229,7 +1458,7 @@ class BrowserAgent:
                             "url": self.page.url if self.page else page_url,
                             "page_title": await self.page.title() if self.page else page_title_val,
                             "duration_ms": exec_ms,
-                            "model": model_name,
+                            "model": model_name, "engine": self._browser_engine,
                             "ai_reasoning": ai_response,
                             "observation": observation,
                             "screenshot": await self._take_screenshot(),
@@ -1249,7 +1478,7 @@ class BrowserAgent:
                         "url": self.page.url if self.page else page_url,
                         "page_title": await self.page.title() if self.page else page_title_val,
                         "duration_ms": exec_ms,
-                        "model": model_name,
+                        "model": model_name, "engine": self._browser_engine,
                         "ai_reasoning": ai_response,
                         "observation": observation,
                         "screenshot": screenshot,
@@ -1278,7 +1507,7 @@ class BrowserAgent:
                             "url": page_url,
                             "page_title": page_title_val,
                             "duration_ms": exec_ms,
-                            "model": model_name,
+                            "model": model_name, "engine": self._browser_engine,
                             "ai_reasoning": ai_response,
                             "observation": observation,
                             "screenshot": await self._take_screenshot(),
@@ -1300,7 +1529,7 @@ class BrowserAgent:
             "url": self.page.url if self.page else "",
             "page_title": await self.page.title() if self.page else "",
             "duration_ms": 0,
-            "model": model_name,
+            "model": model_name, "engine": self._browser_engine,
             "screenshot": await self._take_screenshot(),
         }
 
@@ -1309,27 +1538,31 @@ class BrowserAgent:
         try:
             if self.page and not self.page.is_closed():
                 await self.page.close()
-        except:
+        except Exception:
             pass
         self.page = None
 
         try:
             if self.context:
                 await self.context.close()
-        except:
+        except Exception:
             pass
         self.context = None
 
         try:
-            if self.browser:
+            if self._camoufox_ctx is not None:
+                await self._camoufox_ctx.__aexit__(None, None, None)
+            elif self.browser:
                 await self.browser.close()
-        except:
+        except Exception:
             pass
         self.browser = None
+        self._camoufox_ctx = None
 
         try:
             if self.playwright:
                 await self.playwright.stop()
-        except:
+        except Exception:
             pass
+        self.playwright = None
         self.playwright = None
