@@ -1,5 +1,6 @@
 """Browser Agent - AI-controlled browser automation with stealth"""
 import asyncio
+import itertools
 import os
 import json
 import base64
@@ -1022,20 +1023,25 @@ class BrowserAgent:
 
                 # Build extra params — MiniMax-native controls
                 extra = {}
+                extra_headers = {}
                 # MiniMax extended thinking chews through token budget fast
                 # Use very high max_tokens so visible answer text can emerge after thinking exhausts
-                # Also try to disable extended thinking via MiniMax native param
+                # Disable extended thinking via MiniMax native param in request body
                 if "MiniMax" in model_name or "minimax" in model_name.lower():
-                    extra["thinking_params"] = {"type": "off"}  # MiniMax native param
-                    extra["extra_headers"] = {"X-MiniMax-Thinking": "off"}  # also try header variant
+                    extra["thinking_params"] = {"type": "off"}  # MiniMax native param in body
+                    extra_headers["X-MiniMax-Thinking"] = "off"  # also try header variant
 
-                response = client.chat.completions.create(
+                request_kwargs = dict(
                     model=model_name,
                     messages=messages,
                     max_tokens=32000,  # Was 2000 — too small for extended thinking + answer
                     temperature=0.3,
-                    **(extra if extra else {}),
                 )
+                if extra:
+                    request_kwargs["extra_body"] = extra
+                if extra_headers:
+                    request_kwargs["extra_headers"] = extra_headers
+                response = client.chat.completions.create(**request_kwargs)
                 ai_response = response.choices[0].message.content.strip()
                 self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
                 self.conversation_history.append({"role": "assistant", "content": ai_response})
@@ -1120,15 +1126,24 @@ class BrowserAgent:
         # ── Click failures: try alternate selectors ─────────────────────────────
         if action == "click":
             try:
-                # Try JS click as fallback
+                # Try JS click as fallback — handle Playwright-specific selectors
+                # (:has-text, >>, etc.) by falling back to text-based search
+                arg_lower = arg.lower()
                 alt_js = f"""
                 (function() {{
-                    var el = document.querySelector('{arg}');
-                    if (el) {{ el.click(); return 'clicked'; }}
-                    // Try text-based search
-                    var all = document.querySelectorAll('button, a, [role="button"]');
+                    // If selector looks like Playwright-specific, skip to text search
+                    var is_playwright_selector = /:has-text|>>|>>=|:text|:visible/.test('{arg}');
+                    if (!is_playwright_selector) {{
+                        try {{
+                            var el = document.querySelector('{arg}');
+                            if (el) {{ el.click(); return 'clicked'; }}
+                        }} catch(e) {{ /* invalid selector */ }}
+                    }}
+                    // Text-based search fallback
+                    var all = document.querySelectorAll('button, a, [role="button"], input[type="submit"]');
                     for (var i = 0; i < all.length; i++) {{
-                        if (all[i].textContent.trim().toLowerCase().includes('{arg.lower()}')) {{
+                        var txt = all[i].textContent.trim().toLowerCase();
+                        if (txt.includes('{arg_lower}')) {{
                             all[i].click(); return 'clicked_by_text';
                         }}
                     }}
@@ -1246,7 +1261,7 @@ class BrowserAgent:
                     pass  # proceed without pre-move on any error
                 try:
                     # Use commit to avoid hanging on button clicks that don't navigate
-                    await self.page.click(arg, wait_for_load_state="commit", timeout=5000)
+                    await self.page.click(arg, timeout=5000)
                     await self._human_delay(0.3, 1.0)
                     result["success"] = True
                 except Exception as e:
@@ -1302,7 +1317,7 @@ class BrowserAgent:
                     result["success"] = True
                 except Exception as e:
                     try:
-                        await self.page.click(arg, wait_for_load_state="commit", timeout=5000)
+                        await self.page.click(arg, timeout=5000)
                         await self._human_delay(0.1, 0.3)
                         result["success"] = True
                     except:
@@ -1368,7 +1383,7 @@ class BrowserAgent:
 
             elif action == "dblclick":
                 try:
-                    await self.page.dblclick(arg, timeout=5000, wait_for_load_state="commit")
+                    await self.page.dblclick(arg, timeout=5000)
                     await self._human_delay(0.3, 0.8)
                     result["success"] = True
                 except Exception as e:
@@ -1409,17 +1424,17 @@ class BrowserAgent:
                     result["error"] = f"evaluate failed: {str(e)[:80]}"
 
             elif action == "submit":
-                # Use wait_for_load_state=commit so we don't hang waiting for a POST response
+                # Use a short wait so we don't hang waiting for a POST response
                 # that doesn't navigate anywhere (e.g. httpbin.org/post)
                 try:
                     await asyncio.wait_for(
-                        self.page.click(arg, wait_for_load_state="commit"),
+                        self.page.click(arg),
                         timeout=15.0
                     )
                 except asyncio.TimeoutError:
                     # Fallback: just click without waiting
                     try:
-                        await self.page.click(arg, wait_for_load_state="commit", timeout=8000)
+                        await self.page.click(arg, timeout=8000)
                     except Exception:
                         pass
                 await self._human_delay(0.5, 1.5)

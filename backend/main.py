@@ -188,12 +188,14 @@ async def execute_task(req: TaskRequest):
     _sessions[session_id] = _create_session(session_id, req.task, req.url, req.mode)
 
     try:
+        import logging as _log
         steps_executed = 0
         steps_failed = 0
         answer = None
         screenshot = None
 
         async for step in agent.stream_execute(task=req.task, url=req.url, mode=req.mode):
+            _log.error(f"[STREAM_STEP] {json.dumps({k:v for k,v in step.items() if k != 'screenshot'})}")
             _update_session(session_id, step)
             if step.get("action") == "done" and step.get("status") == "completed":
                 answer = step.get("answer")
