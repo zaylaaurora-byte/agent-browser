@@ -178,6 +178,96 @@ async def get_config(request: Request):
     }
 
 
+class TestModelRequest(BaseModel):
+    provider: str
+    api_key: Optional[str] = None
+    model_name: str
+    base_url: Optional[str] = None  # for Ollama
+
+
+@app.post("/api/test-model")
+async def test_model(req: TestModelRequest):
+    """Send a tiny test prompt to verify the model API credentials work."""
+    import httpx
+    test_prompt = "Reply with exactly one word: hello"
+    start = time.time()
+    latency_ms = None
+    error = None
+    response_text = None
+
+    try:
+        if req.provider == "ollama":
+            base = (req.base_url or "http://localhost:11434").rstrip("/")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(
+                    f"{base}/api/generate",
+                    json={"model": req.model_name, "prompt": test_prompt, "stream": False},
+                )
+                r.raise_for_status()
+                data = r.json()
+                response_text = data.get("response", "").strip()
+        elif req.provider == "openai":
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {req.api_key}"},
+                    json={
+                        "model": req.model_name,
+                        "messages": [{"role": "user", "content": test_prompt}],
+                        "max_tokens": 10,
+                    },
+                )
+                r.raise_for_status()
+                data = r.json()
+                response_text = data["choices"][0]["message"]["content"].strip()
+        elif req.provider == "anthropic":
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": req.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": req.model_name,
+                        "messages": [{"role": "user", "content": test_prompt}],
+                        "max_tokens": 10,
+                    },
+                )
+                r.raise_for_status()
+                data = r.json()
+                response_text = data["content"][0]["text"].strip()
+        elif req.provider == "minimax":
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.post(
+                    "https://api.minimax.chat/v1/text/chatcompletion_v2",
+                    headers={"Authorization": f"Bearer {req.api_key}"},
+                    json={
+                        "model": req.model_name,
+                        "messages": [{"role": "user", "content": test_prompt}],
+                        "max_tokens": 10,
+                    },
+                )
+                r.raise_for_status()
+                data = r.json()
+                response_text = data["choices"][0]["message"]["content"].strip()
+        latency_ms = round((time.time() - start) * 1000)
+    except httpx.TimeoutException:
+        error = "Request timed out after 30s"
+    except httpx.HTTPStatusError as e:
+        error = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+    except Exception as e:
+        error = str(e)[:200]
+
+    return {
+        "ok": error is None,
+        "latency_ms": latency_ms,
+        "response": response_text,
+        "error": error,
+    }
+
+
 @app.get("/api/sessions")
 async def list_sessions(limit: int = 50, status: Optional[str] = None):
     """List recent sessions. Optionally filter by status: running|completed|failed."""

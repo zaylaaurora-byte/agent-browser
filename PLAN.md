@@ -96,14 +96,14 @@ Right now the activity feed is a vertical list. Add an alternative view:
 - `R` — Replay last task
 - Show a `?` help overlay listing all shortcuts
 
-**2.6 Improved Settings Page**
-Current settings are localStorage only. Add:
-- "Test Connection" button that hits `/api/health` and shows latency
-- "Test Model" button that sends a tiny test prompt and shows the response + latency
-- Provider-specific fields: for Ollama show "Base URL" field instead of API key; for OpenAI show model dropdown (gpt-4o, gpt-4o-mini, etc.)
-- Import/export settings as JSON
-- Settings validation: warn if API key looks wrong (e.g. too short for OpenAI)
-- Dark/light theme toggle in settings (currently forced dark)
+**2.6 Improved Settings Page** ✅
+- "Test Connection" button that hits `/api/health` and shows status ✅
+- "Test Model" button via `POST /api/test-model` that sends a 1-word test prompt and shows response + latency (MiniMax, OpenAI, Anthropic, Ollama) ✅
+- Provider-specific fields: Ollama shows "Base URL" field ✅; OpenAI shows model dropdown ✅
+- Import/export settings as JSON ✅
+- Settings validation: warns if API key is too short for the provider ✅
+- Dark/light theme toggle with Sun/Moon buttons ✅
+- Ollama-specific fields: base URL input field ✅
 
 ---
 
@@ -298,12 +298,16 @@ Currently only runs locally via Playwright. Add cloud browser options:
 - `?` → show shortcuts overlay
 - Lightbox: `+`/`-` zoom, `0` reset, `Esc` close
 
-**2.6 — Hardcoded WS URL fixed** ✅
-- Frontend reads `backendUrl` from settings (localStorage) on every execute
-- Settings modal lets you configure the backend WebSocket URL
-- Provider selector (MiniMax / OpenAI / Anthropic / Ollama) with model dropdown
-- "Test Connection" button hits `GET /api/health` and shows status
-- API key + model name sent on every execute (per Phase 1 fix, now also using configurable URL
+**2.6 — Improved Settings Page** ✅
+- Frontend reads `backendUrl` from settings (localStorage) on every execute ✅
+- Provider selector (MiniMax / OpenAI / Anthropic / Ollama) with model dropdown ✅
+- "Test Connection" button hits `GET /api/health` and shows status ✅
+- "Test Model" button — `POST /api/test-model` sends a 1-word test prompt, returns response + latency + error for all 4 providers ✅
+- Import settings as JSON (file upload), Export settings as JSON (file download) ✅
+- API key validation: warns if key is too short or missing expected prefix ✅
+- Dark/light theme toggle with Sun/Moon buttons — applied to `<html>` class ✅
+- Ollama-specific: Base URL field shown instead of API key field ✅
+- API key + model name sent on every execute via WebSocket ✅
 
 ## Complex Site Robustness — Session 2026-05-01 ✅
 
