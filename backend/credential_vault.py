@@ -32,7 +32,7 @@ class CredentialVault:
             if key:
                 self._master_key = key.encode()
                 return
-        except keyring.errors.NoKeyringError:
+        except (keyring.errors.NoKeyringError, keyring.errors.KeyringLocked):
             pass
 
         # Fallback: file-based key storage

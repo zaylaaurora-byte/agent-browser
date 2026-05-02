@@ -572,7 +572,21 @@ class BrowserAgent:
         from workflow_recorder import WorkflowRecorder
         self.recorder = WorkflowRecorder(self, self.action_history)
 
-        # T023: TLS fingerprint injection per session
+        import types
+        # T009: _save_step — bridge to workflow recorder for stream_execute
+        def _save_step_fn(agent, step_data: dict):
+            """Save step to workflow recorder (sync — called from sync context)."""
+            action = step_data.get("action", "unknown")
+            args = {"argument": step_data.get("argument", "")}
+            observation = step_data.get("observation", "")
+            try:
+                agent.recorder.record_step(action=action, args=args, observation=observation)
+            except Exception:
+                pass  # non-fatal
+
+        self._save_step = types.MethodType(_save_step_fn, self)
+
+        # T030: Route interception for challenge detection
         self._tls_inject: Optional[TLSInject] = None
         self._tls_profile_name: str = "chrome_win"
 
@@ -2224,18 +2238,36 @@ class BrowserAgent:
                 url_lower = page_url.lower()
                 challenge_keywords = ["blocked", "security check", "access denied",
                                      "forbidden", "checking your browser", "captcha",
-                                     "turnstile", "cloudflare", "ddos guard"]
-                for kw in challenge_keywords:
-                    if kw in title_lower or kw in url_lower:
-                        challenge_detected = True
-                        logger.warning(f"[ChallengeEscalation] Challenge keyword '{kw}' in title/url: {page_title_val}")
-                        screenshot = await self._take_screenshot()
-                        escalation_result = await self._escalation.escalate(
-                            reason=f"keyword_detected:{kw}",
-                            page=self.page,
-                            screenshot_b64=screenshot,
-                        )
-                        break
+                                     "turnstile", "cloudflare", "ddos guard",
+                                     "cf-challenge", "js-challenge", "_cf_challenge",
+                                     "ray id", "attention required", "verify you are human",
+                                     "cf-ray", "cloudflare ray"]
+                # Also scan page content (forms) for challenge indicators
+                page_content_str = str(page_content).lower()
+                form_has_turnstile = "cf-turnstile-response" in page_content_str
+                form_has_captcha = any(k in page_content_str for k in ["recaptcha", "hcaptcha", "g-recaptcha", "h-captcha"])
+                if form_has_turnstile or form_has_captcha:
+                    challenge_detected = True
+                    kw = "turnstile/captcha form" if form_has_turnstile else "recaptcha/hcaptcha"
+                    logger.warning(f"[ChallengeEscalation] Challenge form detected: {kw}")
+                    screenshot = await self._take_screenshot()
+                    escalation_result = await self._escalation.escalate(
+                        reason=f"challenge_form_detected:{kw}",
+                        page=self.page,
+                        screenshot_b64=screenshot,
+                    )
+                else:
+                    for kw in challenge_keywords:
+                        if kw in title_lower or kw in url_lower:
+                            challenge_detected = True
+                            logger.warning(f"[ChallengeEscalation] Challenge keyword '{kw}' in title/url: {page_title_val}")
+                            screenshot = await self._take_screenshot()
+                            escalation_result = await self._escalation.escalate(
+                                reason=f"keyword_detected:{kw}",
+                                page=self.page,
+                                screenshot_b64=screenshot,
+                            )
+                            break
 
             # T044: Execute escalation — not just signal, ACT
             if challenge_detected and escalation_result and escalation_result["action"] != "continue":

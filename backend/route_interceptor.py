@@ -306,7 +306,7 @@ class RouteInterceptor:
             info = self._detect_challenge(url, headers, status, body, req_cookies)
 
             if info.challenge_type != ChallengeType.NONE:
-                domain_key = self._get_domain_key(url)
+                domain_key = self.get_domain_key(url)
                 info.challenge_domain = domain_key
 
                 # Update tracking
@@ -358,7 +358,7 @@ class RouteInterceptor:
             headers = dict(response.headers)
 
             if status in (403, 429, 503):
-                domain_key = self._get_domain_key(url)
+                domain_key = self.get_domain_key(url)
                 logger.warning(f"[RouteInt] Got {status} from {domain_key} — analyzing...")
 
                 # Try to read the body to confirm challenge
@@ -381,18 +381,18 @@ class RouteInterceptor:
 
     def get_domain_challenge(self, url: str) -> Optional[ChallengeInfo]:
         """Return challenge info for a domain if we've recorded one."""
-        domain_key = self._get_domain_key(url)
+        domain_key = self.get_domain_key(url)
         return self._challenges.get(domain_key)
 
     def should_escalate(self, url: str) -> bool:
         """Return True if this domain has challenged us before and needs tier escalation."""
-        domain_key = self._get_domain_key(url)
+        domain_key = self.get_domain_key(url)
         info = self._challenges.get(domain_key)
         return info is not None and info.bypass_attempts >= 1
 
     def record_bypass_success(self, url: str) -> None:
         """Record that we successfully bypassed a challenge on this domain."""
-        domain_key = self._get_domain_key(url)
+        domain_key = self.get_domain_key(url)
         if domain_key in self._challenges:
             info = self._challenges[domain_key]
             info.bypass_attempts = 0  # Reset — we succeeded

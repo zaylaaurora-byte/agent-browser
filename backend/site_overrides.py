@@ -413,7 +413,7 @@ async def apply_site_override(page, override: SiteOverride) -> bool:
             }
             for name, value in override.seed_cookies.items()
         ]
-        await page.context.set_cookies(cookies)
+        await page.context.add_cookies(cookies)
         applied.append(f"seed_cookies ({len(override.seed_cookies)} cookies)")
 
     # 3. Pre-nav JS

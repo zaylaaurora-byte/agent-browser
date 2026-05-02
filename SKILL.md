@@ -18,7 +18,7 @@ source venv/bin/activate
 uvicorn main:app --reload --port 8001
 ```
 
-Then open `http://localhost:3000` (frontend).
+Then open `http://localhost:3002` (frontend, Next.js).
 
 ## Architecture
 

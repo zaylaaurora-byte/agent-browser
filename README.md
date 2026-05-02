@@ -12,9 +12,9 @@ Agent Browser is an autonomous web automation tool powered by AI. It uses Playwr
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  Next.js Frontend (port 3002)                                            │
 │  ┌──────────────┐ ┌──────────────────┐ ┌─────────────────────────────┐ │
-│  │ Parallax Hero│ │ Live Agent Viewer│ │ Supervisor Dashboard       │ │
+│  │ Parallax Hero│ │ Live Agent Viewer│ │ Supervisor Dashboard         │ │
 │  │ + Settings   │ │ (screenshot film- │ │ (pause/resume/undo/log)     │ │
-│  │              │ │ strip, reasoning) │ │                             │ │
+│  │              │ │ strip, reasoning)  │ │                             │ │
 │  └──────────────┘ └──────────────────┘ └─────────────────────────────┘ │
 │         │                  ▲                        ▲                    │
 │         │ HTTP rewrites    │ WebSocket              │ REST               │
@@ -25,13 +25,13 @@ Agent Browser is an autonomous web automation tool powered by AI. It uses Playwr
 │  FastAPI Backend (port 8001)                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
 │  │ BrowserAgent — AI decision loop (ai_router, domain_memory,         │ │
-│  │ action_history, session_manager, credential_vault, captcha_solver) │ │
+│  │ action_history, session_manager, credential_vault, captcha_solver)   │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 │                              │                                            │
 │                              ▼                                            │
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
 │  │ Playwright — stealth browser (tls_fingerprint, proxy_manager,        │ │
-│  │ visual_diff, workflow_recorder, MCP server (20 tools))             │ │
+│  │ visual_diff, workflow_recorder, antibot_escalation, MCP server)     │ │
 │  └─────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -73,25 +73,27 @@ cd ../ && npm install && npm run dev -- --port 3002
 ## Features
 
 ### Agent Modes
-| Mode | Max Steps | Description |
-|------|-----------|-------------|
-| `fast` | 15 | Quick execution, minimal delays |
-| `deep` | 25 | Full page analysis, forms, interactables |
+| Mode | Max Steps | Max Total Actions |
+|------|-----------|-------------------|
+| `fast` | 12 | 48 |
+| `standard` | 20 | 80 |
+| `deep` | 30 | 120 |
 
 ### Phase 1 — Stealth Hardening
-- Residential proxy rotation (Bright Data, ScraperAPI, generic)
+- Browser engine selection: `chromium`, `camoufox`, `camoufox-virtual`, `nodriver` (stealth Chrome), `ucd` (undetected-chromedriver), `crawlee`
 - TLS/JA3/JA4 fingerprint spoofing (Chrome/Firefox/Safari profiles)
 - WebRTC IP leak blocking
 - GPU randomization (16-entry pool)
 - Viewport randomization with ±20px jitter
 - Canvas, AudioContext, WebGL spoofing
+- Set engine via `BROWSER_ENGINE=chromium|camoufox|nodriver|ucd|crawlee` env var
 
 ### Phase 2 — Session Persistence
 Named sessions save cookies, localStorage, viewport, UA, proxy to `~/.agent-browser/sessions/{name}.json` (mode `0o600`). Sessions survive backend restarts.
 
 ### Phase 3 — Action Batching + Enhanced Page State
 - **Action Batching**: AI returns multiple actions per response, executed sequentially
-- **New actions**: `select_option`, `hover`, `dblclick`, `switch_to_tab`, `get_text`, `evaluate`
+- **New actions**: `select`, `select_option`, `check`, `hover`, `dblclick`, `switch_to_tab`, `open_tab`, `close_tab`, `get_text`, `evaluate`
 - **Retry Intelligence**: alternate selectors → JS fallback before giving up
 - **Enhanced Page State**: SPA detection, CAPTCHA detection, cookie banner, iframe count, select dropdown options, shadow DOM count, ARIA live regions
 - **Human-like Motion**: cubic bezier mouse paths, fractional viewport scroll
@@ -99,16 +101,25 @@ Named sessions save cookies, localStorage, viewport, UA, proxy to `~/.agent-brow
 ### Phase 4 — Action History + Undo
 Captures browser state snapshot before every undoable action. Undo restores cookies, localStorage, URL, scroll position.
 
-### Phase 5 — Credential Vault
-Encrypted credential storage with domain scoping and TOTP 2FA support. Passwords NEVER go to the AI — they flow directly from vault to page form via blind fill.
+### Phase 5 — Antibot Escalation Engine (`antibot_escalation.py`)
+Multi-tier escalation chain for sites with advanced bot detection:
+| Tier | Action | Trigger |
+|------|--------|---------|
+| 1 | Stealth profile rotation | Basic detection signals |
+| 2 | Proxy rotation | Enhanced headers |
+| 3 | Browser fingerprint randomization | WebGL/Canvas fingerprinting |
+| 3.5 | nodriver stealth + Playwright CDP bridge | Selenium/automation flags |
+| 4 | Browser restart with fresh fingerprint | Cloudflare/PerimeterX |
+| 5 | Switch to Firefox engine | Chrome-only detections |
+| 6 | Bright Data unblocker proxy (requires key) | Tier-5 blocks |
 
-### Phase 6 — MCP Server (20 tools)
+### Phase 6 — MCP Server (22 tools, stdio + HTTP)
 stdio transport for Claude Code/Desktop, HTTP for Hermes integration:
 
 | Tool | Description |
 |------|-------------|
 | `browser_navigate` | Navigate to URL |
-| `browser_click` | Click by CSS selector or `@eN` ref |
+| `browser_click` | Click by CSS selector |
 | `browser_type` | Human-like typing |
 | `browser_press` | Keyboard key |
 | `browser_snapshot` | Accessibility tree with ref IDs |
@@ -119,17 +130,17 @@ stdio transport for Claude Code/Desktop, HTTP for Hermes integration:
 | `browser_wait_for` | Poll page for text (up to 30s) |
 | `browser_list_tabs` | List all open tabs |
 | `browser_switch_tab` | Switch tab by index |
+| `browser_open_tab` | Open new tab (optional URL) |
+| `browser_close_tab` | Close current tab |
 | `browser_session_save` | Persist browser state |
 | `browser_session_load` | Restore named session |
 | `browser_get_page_info` | URL, title, engine, loading state |
 | `browser_undo` | Best-effort browser-history undo |
+| `workflow_start_recording` | Begin recording actions to SQLite |
+| `workflow_stop_recording` | Stop and save recording |
 | `workflow_save` | Save workflow to SQLite |
-| `workflow_replay` | Replay saved workflow |
-| `workflow_export` | Export as JSON |
-| `workflow_import` | Import from JSON |
 | `workflow_list` | List saved workflows |
-| `dom_diff` | Visual diff between screenshots |
-| `dom_classify` | Classify page elements (content/modal/nav/ad) |
+| `workflow_replay` | Replay saved workflow |
 
 ### Supervisor Dashboard (`/supervisor`)
 Real-time agent oversight: pause/resume, undo, session save/load, live thinking display, action timeline, runtime stats.
@@ -145,8 +156,9 @@ Real-time agent oversight: pause/resume, undo, session save/load, live thinking 
 | POST | `/api/persistent-sessions/{name}/save` | Save current browser state |
 | POST | `/api/persistent-sessions/{name}/load` | Load a named session |
 | DELETE | `/api/persistent-sessions/{name}` | Delete a session |
-| POST | `/api/vault/credential` | Add a credential |
 | GET | `/api/vault/domains` | List domains with stored creds |
+| GET | `/api/vault/credential/{domain}` | Get credential for domain |
+| POST | `/api/vault/credential` | Add a credential |
 | POST | `/api/vault/fill/{domain}` | Blind fill: returns username + password + TOTP |
 | GET | `/api/history?limit=N` | Get action history |
 | POST | `/api/history/undo` | Undo last action |
@@ -175,11 +187,16 @@ Receive: streamed JSON steps with `thinking`, `observation`, `screenshot_url`, `
 | `credential_vault.py` | Encrypted credentials with TOTP 2FA |
 | `captcha_solver.py` | 2Captcha, Anti-Captcha, CapSolver integration |
 | `action_history.py` | Action history + undo system |
+| `antibot_escalation.py` | Multi-tier antibot escalation engine |
 | `proxy_manager.py` | Residential proxy rotation |
+| `free_proxy_pool.py` | Free proxy list with health checking |
 | `tls_fingerprint.py` | JA3/JA4 TLS fingerprint spoofing |
+| `site_overrides.py` | Site-specific antibot bypass rules |
+| `route_interceptor.py` | Browser route/response interception |
 | `visual_diff.py` | PIL/numpy screenshot diffing |
 | `workflow_recorder.py` | SQLite workflow recorder |
-| `mcp_server.py` | MCP server (20 tools, stdio + HTTP) |
+| `nodriver_bridge.py` | nodriver + Playwright CDP bridge |
+| `mcp_server.py` | MCP server (22 tools, stdio + HTTP) |
 | `main.py` | FastAPI app: REST + WebSocket + lifespan |
 
 ## Verified (May 2026)
@@ -192,15 +209,16 @@ python3 -c "import domain_memory; print('domain_memory OK')"
 python3 -c "import captcha_solver; print('captcha_solver OK')"
 python3 -c "import visual_diff; print('visual_diff OK')"
 python3 -c "import workflow_recorder; print('workflow_recorder OK')"
+python3 -c "import antibot_escalation; print('antibot_escalation OK')"
 ```
 
 **22/22 board tasks passing** — see `.board/prd.json`.
 
 ## Known Limitations
 
-- Commercial antibot sites (Indeed, Expedia, Workable) will block headless Chrome. Use httpbin.org forms for testing, or add a stealth proxy layer (Bright Data, ScraperAPI).
+- Commercial antibot sites (Indeed, Expedia, Workable) will block headless Chrome. The escalation engine handles many cases via profile rotation, nodriver stealth, and proxy layers. For persistent blocks, add Bright Data credentials (`BRAIGHT_DATA_API_KEY`) or use `BROWSER_ENGINE=nodriver` for enhanced stealth.
 - Backend requires DBus/keyring for OS keychain credential vault. In environments without DBus (e.g., Docker), it falls back to file-based master key at `~/.agent-browser/vault/.masterkey` (mode `0o600`).
-- `deep` mode is limited to 25 steps. If tasks seem to run forever, check the mode enum mapping in `stream_execute()`.
+- `deep` mode is limited to 30 steps. If tasks seem to run forever, check the mode enum mapping in `stream_execute()`.
 
 ## GitHub
 
