@@ -13,10 +13,20 @@ logger = logging.getLogger(__name__)
 class ProxyManager:
     """Rotating residential proxy wrapper.
 
-    Supports three backends:
-      - brightdata  : Bright Data's residential proxy network (zone auth)
-      - scraperapi  : ScraperAPI (single API key, port 8001)
-      - generic     : any HTTP/HTTPS/SOCKS5 proxy that respects `http://host:port` format
+    Supports five backends:
+      - brightdata        : Bright Data raw residential proxy (zone auth)
+      - brightdata-unblock: Bright Data dedicated unblocker zones (handles JS challenge bypass)
+      - scraperapi        : ScraperAPI (single API key, port 8001)
+      - oxylabs           : Oxylabs residential proxy
+      - generic           : any HTTP/HTTPS/SOCKS5 proxy that respects `http://host:port` format
+
+    The ``brightdata-unblock`` provider uses Bright Data's Super Proxy with
+    dedicated unblocker zones. These zones run your traffic through Bright Data's
+    own proxy nodes that actively solve JS challenges (Cloudflare, PerimeterX,
+    DataDome) before returning the real content. Format:
+      ``BRIGHTDATA_ZONE=myzone`` + ``PROXY_PROVIDER=brightdata-unblock``
+    Zone must be: ``unblocker-residential``, ``unblocker-datacenter``, or similar
+    ``unblocker-*`` zone type purchased from Bright Data.
 
     Usage::
 
@@ -54,6 +64,7 @@ class ProxyManager:
         self.zone = zone.lower() if zone else "residential"
         self.country = country.lower() if country else "us"
         self.scraperapi_port = scraperapi_port
+        self.oxylabs_port = 13333  # Oxylabs default residential proxy port
         self.generic_proxy_url = proxy_url or os.getenv("PROXY_URL") or ""
         self.rotate_every = rotate_every
         self.pool_size = pool_size
@@ -64,8 +75,8 @@ class ProxyManager:
         self._generic_pool: list[str] = []
 
         # Validate
-        if self.provider not in ("brightdata", "scraperapi", "generic"):
-            raise ValueError(f"Unknown proxy provider '{provider}'. Choose: brightdata, scraperapi, generic")
+        if self.provider not in ("brightdata", "brightdata-unblock", "scraperapi", "oxylabs", "generic"):
+            raise ValueError(f"Unknown proxy provider '{provider}'. Choose: brightdata, brightdata-unblock, scraperapi, oxylabs, generic")
 
         if self.provider == "brightdata" and not self.api_key:
             raise ValueError("Bright Data provider requires an API key (api_key or BRIGHTDATA_ZONE env var)")
@@ -97,8 +108,12 @@ class ProxyManager:
 
         if self.provider == "brightdata":
             return self._brightdata_proxy()
+        elif self.provider == "brightdata-unblock":
+            return self._brightdata_unblock_proxy()
         elif self.provider == "scraperapi":
             return self._scraperapi_proxy()
+        elif self.provider == "oxylabs":
+            return self._oxylabs_proxy()
         else:
             return self._generic_proxy()
 
@@ -175,6 +190,52 @@ class ProxyManager:
             f"http://api.scraperapi.com:{self.scraperapi_port}"
             f"?api_key={self.api_key}&country={cc}"
         )
+
+    def _brightdata_unblock_proxy(self) -> str:
+        """Build a Bright Data SUPER PROXY unblocker zone URL.
+
+        The unblocker zones are dedicated zones purchased from Bright Data that
+        actively solve anti-bot challenges (Cloudflare JS challenge, PerimeterX,
+        DataDome) at the proxy layer. The proxy returns real content — the JS
+        challenge is handled entirely by Bright Data's infrastructure.
+
+        Format: http://username:password@zproxy.lum-superproxy.io:22225
+        The zone is encoded in the username alongside country + session.
+
+        Unlike the raw residential proxy (brightdata), the unblocker proxy:
+        - Returns pre-solved HTML (challenge already handled)
+        - Sets correct original IP headers (X-Forwarded-For, etc.)
+        - Handles retry on challenge detection automatically
+
+        Get unblocker zones from: Bright Data dashboard → Zones → Add zone → Type: Unblocker
+        """
+        host = "zproxy.lum-superproxy.io"
+        port = 22225
+
+        # Unblocker zones encode session differently — use a stable session
+        # so the same exit node handles all requests (important for cookies)
+        session = f"s-{int(time.time() // 3600)}"  # changes hourly
+        username = f"unblock-{self.zone}-{self.country}-{session}:{self.api_key}"
+
+        return f"http://{username}@{host}:{port}"
+
+    def _oxylabs_proxy(self) -> str:
+        """Build an Oxylabs residential proxy URL.
+
+        Format: http://username:password@pr.oxylabs.io:7777
+        Oxylabs residential proxies handle geo-targeting and rotate automatically.
+        Country is set via the username (country-sessions).
+
+        Country codes supported: us, gb, de, fr, ca, au, jp, kr, nl, br, mx, in, it, es, se, no, dk, fi, sg, at, be, ch, cz, gr, ie, pl, pt, ro, sk
+        """
+        host = "pr.oxylabs.io"
+        port = self.oxylabs_port
+
+        # Oxylabs format: username-country
+        session = f"s-{int(time.time() * 1000)}"
+        username = f"{self.api_key}-cc-{self.country}-{session}"
+
+        return f"http://{username}@{host}:{port}"
 
     def _generic_proxy(self) -> str:
         """Return the current generic proxy, rotating when needed."""

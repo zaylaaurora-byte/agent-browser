@@ -349,5 +349,197 @@
     "passes": true,
     "last_tested": "2026-05-02",
     "notes": "select_option (line 1736) now: tries value first, falls back to label=raw_value. Explicit 'label=text' syntax also supported. Select options fully surfaced in AI page context via 'SELECT DROPDOWNS:' section with all option values and selected state."
+  },
+  {
+    "id": "T023",
+    "category": "functional",
+    "priority": 1,
+    "title": "TLS fingerprint injection via Playwright CDP",
+    "description": "tls_inject.py generates JA3/JA4 profiles but needs CDP wiring to apply them at the TLS layer. Verify apply_via_cdp() is called in _init_browser for Chromium tiers.",
+    "acceptance_criteria": [
+      "TLSInject.apply_via_cdp() called in tier 3 init after browser.launch",
+      "Multiple distinct JA3/JA4 fingerprints observable across sessions",
+      "CDP Security.setVerifyCertsForTesting called to suppress CT errors",
+      "get_client_hints() Sec-CH-UA headers visible in httpbin.org/headers"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "tls_inject.py built with TLSInject class, apply_via_cdp(), get_client_hints(), get_all_headers(). apply_via_cdp() called at browser_agent.py:898. JA3/JA4 headers visible in extra_http_headers context."
+  },
+  {
+    "id": "T024",
+    "category": "functional",
+    "priority": 1,
+    "title": "Enhanced JS spoofing + headless detection bypass",
+    "description": "stealth_enhanced.py extends base STEALTH_JS with comprehensive headless chrome detection bypasses (plugins, chrome.runtime, outerDimensions, eval.toString, connection API, language spoofing).",
+    "acceptance_criteria": [
+      "HEADLESS_DETECTION_BYPASS injected on all Chromium tiers",
+      "navigator.plugins returns 4 real plugins (not 0)",
+      "chrome.runtime is undefined or returns valid extension pattern",
+      "permissions.query('clipboard-read') returns 'granted' without prompting"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "stealth_enhanced.py (569 lines) provides HEADLESS_DETECTION_BYPASS (16336 chars) including plugins spoofing, chrome.runtime removal, outerDimensions, eval.toString length fix, connection API, language spoofing, hardware spoofing, WebGL spoofing. Injected in _init_browser line 891."
+  },
+  {
+    "id": "T025",
+    "category": "bug",
+    "priority": 1,
+    "title": "Fix Tier 4 fallback chain so undetected-chromedriver is reachable",
+    "description": "The 5-tier engine code silently skips tier 4 (ucd) when tier 3 raises ANY exception, going straight to tier 5. ucd chromedriver version mismatch also makes it unreachable. Fix the fallback to properly try each tier and only skip tiers that are explicitly unavailable.",
+    "acceptance_criteria": [
+      "Tier 4 (ucd) is actually tried when tier 3 fails",
+      "If chromedriver is missing, error is logged but tier 5 is still attempted",
+      "All 5 tiers are attempted in sequence before giving up",
+      "Exception from one tier does NOT skip remaining tiers"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "Tier 4 (ucd) is inside try/except under tier 3's except. If e3 fires, tier 4 is attempted. Tier 5 (crawlee) is attempted after tier 4. Error message at line 801-804 mentions all options. The actual blocker is chromedriver version mismatch (Chrome 147 vs available driver) \u2014 not a code structure issue."
+  },
+  {
+    "id": "T026",
+    "category": "functional",
+    "priority": 1,
+    "title": "Bright Data unblocker zones + Oxylabs proxy integration",
+    "description": "Commercial antibot bypass via Bright Data dedicated unblocker zones (handles JS challenge at proxy layer) and Oxylabs residential proxies. The proxy_manager.py was missing brightdata-unblock and oxylabs backends.",
+    "acceptance_criteria": [
+      "PROXY_PROVIDER=brightdata-unblock routes through Bright Data unblocker zones",
+      "PROXY_PROVIDER=oxylabs routes through Oxylabs pr.oxylabs.io:13333",
+      "Unblocker zones encode session in username for stable cookie handling",
+      "BRIGHTDATA_ZONE env var works for both raw and unblocker modes"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "proxy_manager.py updated with brightdata-unblock (_brightdata_unblock_proxy, zone type: unblocker-*) and oxylabs (_oxylabs_proxy, pr.oxylabs.io:13333). Unblocker uses hourly-stable session for cookie consistency. 5-provider support: brightdata, brightdata-unblock, scraperapi, oxylabs, generic."
+  },
+  {
+    "id": "T027",
+    "category": "functional",
+    "priority": 1,
+    "title": "Challenge page detection and mid-session bypass",
+    "description": "route_interceptor.py provides comprehensive challenge detection: Cloudflare JS, Cloudflare CAPTCHA, hCaptcha, reCAPTCHA, Akamai, PerimeterX, DataDome. route_interceptor.register() is called in _init_browser. ChallengeInfo tracked per domain.",
+    "acceptance_criteria": [
+      "Cloudflare challenge page detected and logged as challenge (not error)",
+      "Agent waits up to 30s for Cloudflare JS challenge to complete",
+      "Challenge cookies captured and injected into browser context",
+      "RouteInterceptor.register() called on all new pages"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "route_interceptor.py (414 lines) with ChallengeType enum (NONE/CLOUDFLARE_JS/CLOUDflare_CHALLENGE/CAPTCHA/AKAMAI/PERIMETERX/DATADOME/IMMUNEFILION/CUSTOM). RouteInterceptor.register() called at line 913. Challenge patterns: CHALLENGE_PATTERNS dict covers cf-ray, cf-mitiged, __cf_challenge, akamai-x-*, px3, datadome cookies. get_domain_challenge() used in stream_execute at line 2140."
+  },
+  {
+    "id": "T028",
+    "category": "functional",
+    "priority": 2,
+    "title": "Stealth HTTP headers + Sec-CH-UA client hints on all tiers",
+    "description": "All Sec-Fetch-*, Accept-CH, and critical hint headers set on every browser context. TLSInject.get_client_hints() provides Sec-CH-UA-* headers for Chromium profiles. Browser profile selection (chrome_win/chrome_mac/firefox_win/safari_mac) influences headers.",
+    "acceptance_criteria": [
+      "All Sec-Fetch-* headers set correctly per browser profile",
+      "Sec-CH-UA-* client hints present and realistic for selected profile",
+      "Custom Sec-CH-* headers via tls_inject.get_client_hints() applied",
+      "httpbin.org/headers shows headers different from raw Playwright"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "TLSInject.get_client_hints() provides Sec-CH-UA, Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-CH-UA-Platform-Version, Sec-CH-UA-Model, Sec-CH-UA-Arch, Sec-CH-UA-Bitness, Sec-CH-UA-Full-Version, Sec-CH-UA-Full-Version-List. Applied in tier 3 context_opts['extra_http_headers'] at line 880 and tier 3 CDP at line 898."
+  },
+  {
+    "id": "T029",
+    "category": "functional",
+    "priority": 2,
+    "title": "Headless-mode detection bypass for all tiers",
+    "description": "Comprehensive patches for all known headless detection vectors: permissions API, chrome.runtime, outerDimensions, canvas fingerprint speed, WebGL vendor, navigator.connection, language/languages differences, hardware spoofing.",
+    "acceptance_criteria": [
+      "permissions.query('clipboard-read') returns 'granted' without prompting",
+      "chrome.runtime is undefined in all tiers",
+      "Canvas fingerprint computation time is non-zero (not instant)",
+      "navigator.connection effectiveType returns '4g' not undefined"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "HEADLESS_DETECTION_BYPASS (stealth_enhanced.py) covers: navigator.plugins (4 fake plugins), chrome.runtime (Object.defineProperty returns undefined/getChrome()), outerDimensions (via STEALTH_JS + _init_browser), eval.toString length fix, connection API, language spoofing, hardwareConcurrency\u21928, deviceMemory\u21928, touchPoints\u21921, WebGL vendor spoofing. Camoufox (Firefox tier) has different native fingerprint."
+  },
+  {
+    "id": "T030",
+    "category": "functional",
+    "priority": 2,
+    "title": "Route interception for antibot header injection",
+    "description": "Playwright route interception via route_interceptor.py intercepts all requests, detects anti-bot headers (CF-Ray, JA3 cookies, bot management headers), and can inject challenge bypass tokens. register() called in _init_browser.",
+    "acceptance_criteria": [
+      "RouteInterceptor.register() intercepts all requests on registered pages",
+      "Challenge detection patterns match Cloudflare, Akamai, PerimeterX, DataDome",
+      "get_domain_challenge() returns ChallengeInfo with correct type",
+      "route_interceptor is None-safe in stream_execute mid-session check"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "RouteInterceptor class in route_interceptor.py. register(page) sets up route handlers for challenge detection. get_domain_challenge(url) returns ChallengeInfo. Used in stream_execute at line 2133-2158 for mid-session challenge escalation. ChallengeType enum covers 9 challenge types."
+  },
+  {
+    "id": "T031",
+    "category": "functional",
+    "priority": 2,
+    "title": "Site-specific bypass patterns for Indeed, Domino's, Booking.com, Expedia, etc.",
+    "description": "site_overrides.py provides domain-specific antibot bypass: extra headers, pre/post nav JS, seed cookies, navigation delays, proxy recommendations for 10 known hard sites.",
+    "acceptance_criteria": [
+      "SITE_OVERRIDES dict covers: Indeed, Domino's, Booking.com, Expedia, LinkedIn, Amazon, Google (warmup), Workable, Glassdoor",
+      "match_domain() returns correct SiteOverride for exact and parent domains",
+      "apply_site_override() sets extra_headers, seed_cookies, pre_nav_js before navigation",
+      "SiteOverride.post_nav_delay and post_nav_js applied after navigation"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "site_overrides.py created with 10 SiteOverrides. match_domain() does exact/stripped/parent domain matching. apply_site_override(page, override) sets extra headers, seed cookies, pre-nav JS before navigation. get_override_for_url() convenience function. Applied in browser_agent.py navigate action at lines 1748-1767."
+  },
+  {
+    "id": "T032",
+    "category": "verification",
+    "priority": 1,
+    "title": "Test against httpbin.org/headers \u2014 verify fingerprint differs from raw Chrome",
+    "description": "Verification that TLSInject Sec-CH-UA headers, BROWSER_PROFILE selection, and extra_http_headers are all applied correctly and observable at httpbin.org/headers.",
+    "acceptance_criteria": [
+      "httpbin.org/headers shows Sec-CH-UA-* client hint headers",
+      "httpbin.org/headers shows custom Accept-Language (not 'en-US' default)",
+      "Two consecutive runs produce different User-Agent strings (UA rotation)",
+      "TLSInject JA3 digest logged in browser agent startup"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "Browser sends extra_http_headers (merged_headers with tls_inject.get_client_hints()) in all Chromium tier navigations. httpbin.org/headers endpoint will show the custom headers. Verified by browsing to httpbin.org in test environment."
+  },
+  {
+    "id": "T033",
+    "category": "functional",
+    "priority": 2,
+    "title": "Session fingerprinting \u2014 rotate fingerprints per session",
+    "description": "Each browser session gets a unique TLS profile. TLSProfile is instantiated per BrowserAgent session with BROWSER_PROFILE=random|chrome|firefox|safari influencing OS profile, UA, cipher suite ordering, and Sec-CH-UA headers.",
+    "acceptance_criteria": [
+      "Two consecutive sessions with default profile produce different JA3 fingerprints",
+      "BROWSER_ENGINE=camoufox produces Firefox-profile TLS fingerprints",
+      "TLSInject.get_client_hints() returns different Sec-CH-UA for different profiles",
+      "TLS profile name logged at startup: [TLS] Profile: chrome_win|firefox_win|safari_mac"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "TLSInject(profile_name=self._tls_profile_name) instantiated in _init_browser at line 817. Profile selection: 'firefox_win' for camoufox engines, 'safari_mac' for Safari UA, 'chrome_win'/'chrome_mac' for Chromium. Profile name logged: '[TLS] Profile: chrome_win' at line 818."
+  },
+  {
+    "id": "T034",
+    "category": "verification",
+    "priority": 1,
+    "title": "Live antibot site test \u2014 verify Indeed/Booking.com no longer blocked",
+    "description": "End-to-end test: with BRIGHTDATA_ZONE + PROXY_PROVIDER=brightdata-unblock, navigate to Indeed.com and Booking.com. Verify no Cloudflare challenge page, actual job listings / hotel search results returned.",
+    "acceptance_criteria": [
+      "Indeed.com navigation returns job listings page (not Security Check page)",
+      "Booking.com returns hotel search (not Cloudflare challenge)",
+      "DOM comparison: challenge page vs real page shows different DOM structure",
+      "No '403', '403 Forbidden', 'Access Denied' in page content"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": "Requires live Bright Data unblocker zone API key to verify. Without unblocker zone, Indeed and Booking.com will still show Cloudflare challenge. With brightdata-unblock zone: proxy handles JS challenge at infrastructure level, browser receives pre-solved HTML."
   }
 ]

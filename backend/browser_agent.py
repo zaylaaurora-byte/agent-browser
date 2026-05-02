@@ -21,6 +21,14 @@ from captcha_solver import (
     TYPE_HCAPTCHA, TYPE_RECAPTCHA_V2, TYPE_RECAPTCHA_V3,
     TYPE_TURNSTILE, TYPE_CLOUDflare,
 )
+# T023: TLS fingerprint injection
+from tls_inject import TLSInject, merge_fingerprint_headers
+# T024: Enhanced JS spoofing + headless bypass
+from stealth_enhanced import HEADLESS_DETECTION_BYPASS, build_headless_bypass_headers
+# T030: Route interception for challenge detection
+from route_interceptor import RouteInterceptor, ChallengeType
+# T031: Site-specific antibot bypass patterns
+from site_overrides import match_domain, apply_site_override, get_override_for_url
 
 logger = logging.getLogger(__name__)
 
@@ -556,6 +564,16 @@ class BrowserAgent:
         from workflow_recorder import WorkflowRecorder
         self.recorder = WorkflowRecorder(self, self.action_history)
 
+        # T023: TLS fingerprint injection per session
+        self._tls_inject: Optional[TLSInject] = None
+        self._tls_profile_name: str = "chrome_win"
+
+        # T030: Route interception for challenge detection
+        self._route_interceptor: Optional[RouteInterceptor] = None
+        self._challenge_escalation: bool = False
+        self._challenge_domain: str = ""
+        self._challenge_type: Optional[ChallengeType] = None
+
         # SQLite run history DB (Phase 4)
         self.run_db_id: Optional[int] = None
 
@@ -788,10 +806,40 @@ class BrowserAgent:
                                                     "Install crawlee: pip install crawlee"
                                                 )
 
+        # ── T023: TLS fingerprint profile selection ──────────────────────────────────
+        # Match TLS profile to browser engine for consistency across TLS + HTTP layers
+        if "firefox" in self._browser_engine or "camoufox" in self._browser_engine:
+            self._tls_profile_name = "firefox_win"
+        elif "safari" in self._browser_engine:
+            self._tls_profile_name = "safari_mac"
+        else:
+            # Chromium-based engines — pick OS variant
+            self._tls_profile_name = "chrome_win" if profile["os"] == "windows" else "chrome_mac"
+
+        self._tls_inject = TLSInject(profile_name=self._tls_profile_name)
+        logger.info(f"[TLS] Profile: {self._tls_profile_name}")
+
         # ── Context + page setup (all Playwright-compatible tiers) ─────────────
         if self._browser_engine in ("camoufox-virtual", "camoufox"):
             self.page    = await self.browser.new_page()
             self.context = self.page.context
+
+            # Build headers: base + TLS inject (Sec-CH-UA client hints + JA3/JA4)
+            base_headers = {
+                "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+            }
+            # T028: Merge in Sec-CH-UA and other client hint headers
+            tls_headers = self._tls_inject.get_client_hints()
+            merged_headers = {**base_headers, **tls_headers}
+
             await self.context.add_init_script(
                 STEALTH_JS +
                 "\ntry{"
@@ -806,7 +854,10 @@ class BrowserAgent:
                 "\n" + f"Object.defineProperty(window,'outerWidth',  {{get:()=>{vp_w}}});"
                 "\n" + f"Object.defineProperty(window,'outerHeight', {{get:()=>{vp_h}}});"
             )
-            await self.page.set_extra_http_headers({
+            await self.page.set_extra_http_headers(merged_headers)
+        elif self._browser_engine in ("chromium", "ucd"):
+            # Build headers: base + TLS inject + Sec-CH-UA (T023, T028)
+            base_headers = {
                 "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                 "Accept-Encoding": "gzip, deflate, br",
@@ -816,8 +867,11 @@ class BrowserAgent:
                 "Sec-Fetch-Site": "none",
                 "Sec-Fetch-User": "?1",
                 "Cache-Control": "max-age=0",
-            })
-        elif self._browser_engine in ("chromium", "ucd"):
+            }
+            # T023: Merge TLS inject headers (JA3/JA4 correlation + Sec-CH-UA client hints)
+            tls_headers = self._tls_inject.get_client_hints()
+            merged_headers = {**base_headers, **tls_headers}
+
             context_opts = {
                 "viewport": {"width": vp_w, "height": vp_h},
                 "screen": {"width": scr_w, "height": scr_h},
@@ -825,28 +879,27 @@ class BrowserAgent:
                 "timezone_id": profile["timezone_id"],
                 "user_agent": random.choice(USER_AGENTS),
                 "color_scheme": random.choice(["dark", "light", "light"]),
-                "extra_http_headers": {
-                    "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Sec-Fetch-User": "?1",
-                    "Cache-Control": "max-age=0",
-                },
+                "extra_http_headers": merged_headers,
             }
             if proxy_url:
                 context_opts["proxy"] = {"server": proxy_url}
             self.context = await self.browser.new_context(**context_opts)
             self.page = await self.context.new_page()
-            # Inject stealth JS on every new document
+
+            # T024: Enhanced stealth JS: inject headless bypass + WebGL + plugins spoofing
+            # This is appended AFTER STEALTH_JS so it overrides/extends base patches
             await self.context.add_init_script(
                 STEALTH_JS +
+                HEADLESS_DETECTION_BYPASS +
                 f"\nObject.defineProperty(window,'outerWidth',  {{get:()=>{vp_w}}})"
                 f"\nObject.defineProperty(window,'outerHeight', {{get:()=>{vp_h}}})"
             )
+
+            # T023: Try CDP-based TLS channel ID injection (Chromium only)
+            try:
+                await self._tls_inject.apply_via_cdp(self.page)
+            except Exception as tls_cdp_err:
+                logger.warning(f"[TLS] CDP injection skipped: {tls_cdp_err}")
         elif self._browser_engine == "crawlee-jsdom":
             # Crawlee manages its own page — just open a fresh page
             self.context = None
@@ -856,6 +909,12 @@ class BrowserAgent:
 
         self.page.set_default_timeout(15000)
         self.page.set_default_navigation_timeout(30000)
+
+        # T030: Register route interception for challenge detection
+        if self._route_interceptor is None:
+            self._route_interceptor = RouteInterceptor(self)
+            await self._route_interceptor.register(self.page)
+            logger.info("[RouteInt] Registered on first page")
 
         # Auto-load named session after browser launch (Phase 2)
         if self.session_name:
@@ -1686,8 +1745,26 @@ class BrowserAgent:
             if action == "navigate":
                 await self.action_history.capture_snapshot(action)
                 url = arg if arg.startswith("http") else f"https://{arg}"
+
+                # T031: Apply site-specific antibot override BEFORE navigation
+                override = get_override_for_url(url)
+                if override:
+                    applied = await apply_site_override(self.page, override)
+                    if applied:
+                        logger.info(f"[SiteOverride] Applied {override.name} bypass for {url}")
+
                 await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 await self._human_delay(0.5, 1.5)
+
+                # T031: Post-navigation delay + JS for known hard sites
+                if override and override.post_nav_delay > 0:
+                    await asyncio.sleep(override.post_nav_delay)
+                if override and override.post_nav_js:
+                    try:
+                        await self.page.evaluate(override.post_nav_js)
+                    except Exception as e:
+                        logger.warning(f"[SiteOverride] post_nav_js failed: {e}")
+
                 result["success"] = True
                 result["url"] = self.page.url
                 self.action_history.record_action(action, {"url": arg}, "completed", "navigated")
@@ -2072,6 +2149,35 @@ class BrowserAgent:
             page_data = self._parse_page_data(page_content)
             page_title_val = await self.page.title() if self.page else ""
             page_url = page_data.get("url", "")
+
+            # T027 + T030: Check route interceptor for mid-session challenge detection
+            # If a challenge was detected mid-session, escalate to tier retry
+            if self._route_interceptor and self._route_interceptor.should_escalate(page_url):
+                logger.warning(
+                    f"[ChallengeEscalation] Challenge detected on {self._route_interceptor.get_domain_key(page_url)} "
+                    f"during step {step_num} — signaling tier fallback"
+                )
+                challenge_info = self._route_interceptor.get_domain_challenge(page_url)
+                challenge_type_str = challenge_info.challenge_type.value if challenge_info else "unknown"
+                yield {
+                    "step": step_num,
+                    "action": "challenge_escalate",
+                    "argument": self._challenge_domain or page_url,
+                    "status": "thinking",
+                    "url": page_url,
+                    "page_title": page_title_val,
+                    "model": "playwright",
+                    "engine": self._browser_engine,
+                    "duration_ms": 0,
+                    "ai_reasoning": f"Anti-bot challenge ({challenge_type_str}) detected mid-session. Escalating to higher tier.",
+                    "observation": f"Challenge detected: {challenge_type_str}. Consider switching to a more stealthy browser engine or using proxy rotation.",
+                    "screenshot": await self._take_screenshot(),
+                    "challenge_type": challenge_type_str,
+                }
+                # Reset escalation flag so we don't re-yield the same challenge
+                self._challenge_escalation = False
+                # NOTE: Actual tier switching requires session restart. The AI will
+                # see this step and can decide to retry or change strategy.
 
             # Build observation summary for frontend
             form_fields = list(page_data.get("form", {}).keys())
