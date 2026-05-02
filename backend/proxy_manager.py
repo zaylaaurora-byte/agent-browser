@@ -53,6 +53,11 @@ class ProxyManager:
         country: str = "us",
         # ScraperAPI
         scraperapi_port: int = 8001,
+        # Webshare (free plan: 10 datacenter proxies, 1GB/month)
+        # Sign up at https://www.webshare.io — no credit card required
+        # Free plan: 10 rotating datacenter IPs with username:password auth
+        webshare_username: Optional[str] = None,
+        webshare_password: Optional[str] = None,
         # Generic
         proxy_url: Optional[str] = None,
         # Rotation
@@ -64,6 +69,8 @@ class ProxyManager:
         self.zone = zone.lower() if zone else "residential"
         self.country = country.lower() if country else "us"
         self.scraperapi_port = scraperapi_port
+        self.webshare_username = webshare_username or os.getenv("WEBSHARE_USERNAME") or ""
+        self.webshare_password = webshare_password or os.getenv("WEBSHARE_PASSWORD") or ""
         self.oxylabs_port = 13333  # Oxylabs default residential proxy port
         self.generic_proxy_url = proxy_url or os.getenv("PROXY_URL") or ""
         self.rotate_every = rotate_every
@@ -75,8 +82,8 @@ class ProxyManager:
         self._generic_pool: list[str] = []
 
         # Validate
-        if self.provider not in ("brightdata", "brightdata-unblock", "scraperapi", "oxylabs", "generic"):
-            raise ValueError(f"Unknown proxy provider '{provider}'. Choose: brightdata, brightdata-unblock, scraperapi, oxylabs, generic")
+        if self.provider not in ("brightdata", "brightdata-unblock", "webshare", "scraperapi", "oxylabs", "generic"):
+            raise ValueError(f"Unknown proxy provider '{provider}'. Choose: brightdata, brightdata-unblock, webshare, scraperapi, oxylabs, generic")
 
         if self.provider == "brightdata" and not self.api_key:
             raise ValueError("Bright Data provider requires an API key (api_key or BRIGHTDATA_ZONE env var)")
@@ -112,6 +119,8 @@ class ProxyManager:
             return self._brightdata_unblock_proxy()
         elif self.provider == "scraperapi":
             return self._scraperapi_proxy()
+        elif self.provider == "webshare":
+            return self._webshare_proxy()
         elif self.provider == "oxylabs":
             return self._oxylabs_proxy()
         else:
@@ -172,6 +181,34 @@ class ProxyManager:
         username = f"zone-{self.zone}-{self.country}-{session}:{self.api_key}"
 
         return f"http://{username}@{host}:{port}"
+
+    def _webshare_proxy(self) -> str:
+        """Build a Webshare rotating proxy URL.
+
+        Webshare free plan: 10 datacenter proxies, 1GB/month, no credit card.
+        Sign up at https://www.webshare.io → free plan → download proxy list.
+        The free plan gives you 10 proxy endpoints in the format:
+            {country}--pr.rotating.webshare.io:80
+            or rotating.webshare.io:80
+
+        Auth: username:password from your Webshare dashboard.
+
+        Set env vars: WEBSHARE_USERNAME + WEBSHARE_PASSWORD
+        Then use: PROXY_PROVIDER=webshare
+
+        Returns format: http://username:password@proxy_endpoint:port
+        """
+        if not self.webshare_username or not self.webshare_password:
+            raise ValueError(
+                "Webshare proxy requires WEBSHARE_USERNAME + WEBSHARE_PASSWORD.\n"
+                "Sign up free at https://www.webshare.io — no credit card required.\n"
+                "Set: export WEBSHARE_USERNAME=your_username\nexport WEBSHARE_PASSWORD=your_password\n"
+                "export PROXY_PROVIDER=webshare"
+            )
+
+        # Webshare free plan rotating proxy endpoint
+        endpoint = " rotating.webshare.io:80"
+        return f"http://{self.webshare_username}:{self.webshare_password}@{endpoint.strip()}"
 
     def _scraperapi_proxy(self) -> str:
         """Build a ScraperAPI proxy URL.

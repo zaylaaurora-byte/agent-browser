@@ -27,6 +27,8 @@ from tls_inject import TLSInject, merge_fingerprint_headers
 from stealth_enhanced import HEADLESS_DETECTION_BYPASS, build_headless_bypass_headers
 # T030: Route interception for challenge detection
 from route_interceptor import RouteInterceptor, ChallengeType
+# T036: nodriver stealth browser + Playwright CDP bridge
+from nodriver_bridge import NodriverBridge
 # T031: Site-specific antibot bypass patterns
 from site_overrides import match_domain, apply_site_override, get_override_for_url
 
@@ -539,6 +541,10 @@ class BrowserAgent:
         self._camoufox_ctx = None   # holds camoufox context manager for cleanup
         self._browser_engine = "chromium"
 
+        # T036: nodriver bridge (holds the bridge when using nodriver engine)
+        self._nodriver_bridge: Optional["NodriverBridge"] = None
+        self._nodriver_driver: Optional[Any] = None  # raw ucd driver for ucd tier
+
         # Session persistence (Phase 2)
         self.session_name = session_name
         from session_manager import SessionManager
@@ -755,6 +761,45 @@ class BrowserAgent:
                                 logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
                             except Exception as e3:
                                 logger.warning(f"Tier 3 (chromium) failed: {e3!r}")
+
+                                # ── Tier 3.5: nodriver stealth + Playwright CDP ─────────────
+                                # nodriver patches Chrome at runtime to remove automation signals.
+                                # Playwright connects to it via CDP websocket URL, giving us:
+                                #   nodriver stealth + Playwright API + our TLS/JS spoofing layers.
+                                if not forced_engine or forced_engine == "nodriver":
+                                    try:
+                                        bridge = NodriverBridge(
+                                            headless=True,
+                                            proxy=proxy_url,
+                                        )
+                                        pw, pw_browser, page = await bridge.start()
+                                        # Store on self for cleanup in cleanup_browser()
+                                        self._nodriver_bridge = bridge
+                                        self.playwright = pw
+                                        self.browser = pw_browser   # Playwright browser (connected via CDP)
+                                        self.page = page
+                                        self._browser_engine = "nodriver"
+                                        logger.info("Engine: nodriver stealth + Playwright CDP (tier 3.5)")
+                                        # Jump straight to TLS/profile setup — skip the context/page setup below
+                                        self._tls_profile_name = "chrome_win" if profile["os"] == "windows" else "chrome_mac"
+                                        self._tls_inject = TLSInject(profile_name=self._tls_profile_name)
+                                        # Apply TLS inject + enhanced stealth on nodriver's page
+                                        await self.context.add_init_script(
+                                            HEADLESS_DETECTION_BYPASS
+                                        )
+                                        tls_headers = self._tls_inject.get_client_hints()
+                                        if tls_headers:
+                                            await self.page.set_extra_http_headers(tls_headers)
+                                        try:
+                                            await self._tls_inject.apply_via_cdp(self.page)
+                                        except Exception as tls_err:
+                                            logger.warning(f"[TLS] CDP injection skipped: {tls_err}")
+                                        # Register route interceptor for challenge detection
+                                        ri = RouteInterceptor(log=logger)
+                                        await ri.register(self.page)
+                                        return  # ← skip the context/page setup below
+                                    except Exception as e35:
+                                        logger.warning(f"Tier 3.5 (nodriver) failed: {e35!r}")
 
                                 # ── Tier 4: undetected-chromedriver ─────────────
                                 if not forced_engine or forced_engine == "ucd":
@@ -2516,6 +2561,9 @@ class BrowserAgent:
         try:
             if self._camoufox_ctx is not None:
                 await self._camoufox_ctx.__aexit__(None, None, None)
+            elif self._nodriver_bridge is not None:
+                # T036: nodriver bridge — calls Playwright close + nodriver browser stop
+                await self._nodriver_bridge.stop()
             elif self.browser:
                 await self.browser.close()
         except Exception:
