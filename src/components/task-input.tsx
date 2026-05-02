@@ -81,7 +81,7 @@ export function TaskInput({
       {/* Main task card */}
       <div className="glass-card overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between overflow-hidden">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600/20 to-cyan-600/20 border border-violet-500/20 flex items-center justify-center">
               <span className="text-sm">🎯</span>
@@ -194,7 +194,7 @@ export function TaskInput({
       </div>
 
       {/* Quick Launch */}
-      <div className="glass-card overflow-hidden">
+      <div className="glass-card overflow-hidden mb-6">
         <div className="px-5 py-3 border-b border-white/[0.04]">
           <span className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-semibold">
             Quick Launch

@@ -144,7 +144,7 @@ export default function SupervisorPage() {
   // ─── Fetch session list ─────────────────────────────────────────────────────
   const fetchSessions = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8001/api/sessions?limit=50");
+      const res = await fetch("/api/sessions?limit=50");
       const data = await res.json();
       setState((s) => ({ ...s, sessions: data.sessions || [] }));
     } catch { /* ignore */ }
@@ -153,7 +153,7 @@ export default function SupervisorPage() {
   // ─── Fetch agent status ────────────────────────────────────────────────────
   const fetchAgentStatus = useCallback(async () => {
     try {
-      const res = await fetch("http://localhost:8001/api/supervisor/status");
+      const res = await fetch("/api/supervisor/status");
       const data = await res.json();
       setState((s) => ({
         ...s,
@@ -168,7 +168,7 @@ export default function SupervisorPage() {
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket("ws://localhost:8001/ws/agent");
+    const ws = new WebSocket(`ws://${window.location.host}/ws/agent`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -246,7 +246,7 @@ export default function SupervisorPage() {
   // ─── Pause / Resume ────────────────────────────────────────────────────────
   const pauseAgent = useCallback(async () => {
     try {
-      await fetch("http://localhost:8001/api/supervisor/pause", { method: "POST" });
+      await fetch("/api/supervisor/pause", { method: "POST" });
       setState((s) => ({ ...s, isPaused: true, agentStatus: "paused" }));
       stopTimer();
     } catch (e) { console.error("pause failed", e); }
@@ -254,7 +254,7 @@ export default function SupervisorPage() {
 
   const resumeAgent = useCallback(async () => {
     try {
-      await fetch("http://localhost:8001/api/supervisor/resume", { method: "POST" });
+      await fetch("/api/supervisor/resume", { method: "POST" });
       setState((s) => ({ ...s, isPaused: false, agentStatus: "running" }));
       startTimer();
     } catch (e) { console.error("resume failed", e); }
@@ -264,7 +264,7 @@ export default function SupervisorPage() {
   const saveSession = useCallback(async () => {
     if (!saveName.trim()) return;
     try {
-      await fetch(`http://localhost:8001/api/persistent-sessions/${encodeURIComponent(saveName)}/save`, { method: "POST" });
+      await fetch(`/api/persistent-sessions/${encodeURIComponent(saveName)}/save`, { method: "POST" });
       setSaveName("");
     } catch (e) { console.error("save failed", e); }
   }, [saveName]);
@@ -273,7 +273,7 @@ export default function SupervisorPage() {
   const loadSession = useCallback(async () => {
     if (!loadSessionId) return;
     try {
-      const res = await fetch(`http://localhost:8001/api/persistent-sessions/${encodeURIComponent(loadSessionId)}/load`, { method: "POST" });
+      const res = await fetch(`/api/persistent-sessions/${encodeURIComponent(loadSessionId)}/load`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) alert(data.error || "Load failed");
     } catch (e) { console.error("load failed", e); }
@@ -283,7 +283,7 @@ export default function SupervisorPage() {
   const undoLastAction = useCallback(async () => {
     setUndoLoading(true);
     try {
-      const res = await fetch("http://localhost:8001/api/supervisor/undo", { method: "POST" });
+      const res = await fetch("/api/supervisor/undo", { method: "POST" });
       if (res.ok) {
         setState((s) => ({ ...s, steps: s.steps.slice(0, -1) }));
       }
@@ -312,7 +312,7 @@ export default function SupervisorPage() {
   // ─── Load session steps ─────────────────────────────────────────────────────
   const loadSessionSteps = useCallback(async (sessionId: string) => {
     try {
-      const res = await fetch(`http://localhost:8001/api/sessions/${sessionId}`);
+      const res = await fetch(`/api/sessions/${sessionId}`);
       const data = await res.json();
       if (data.steps) {
         const steps = data.steps.map((s: Step) => ({ ...s, timestamp: new Date(s.timestamp || Date.now()).getTime() }));

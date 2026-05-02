@@ -25,16 +25,26 @@ class CredentialVault:
         self._fernet = Fernet(self._load_master_key())
     
     def _ensure_master_key(self):
-        """Get or create master key via OS keychain."""
-        # Try keyring first (macOS Keychain, Windows Credential Manager, libsecret on Linux)
-        key = keyring.get_password("agent-browser-vault", "master-key")
-        if key:
-            self._master_key = key.encode()
+        """Get or create master key via OS keychain, fallback to file."""
+        import keyring.errors
+        try:
+            key = keyring.get_password("agent-browser-vault", "master-key")
+            if key:
+                self._master_key = key.encode()
+                return
+        except keyring.errors.NoKeyringError:
+            pass
+
+        # Fallback: file-based key storage
+        if VAULT_MASTER_KEY_FILE.exists():
+            self._master_key = VAULT_MASTER_KEY_FILE.read_bytes()
             return
-        
-        # Generate new key
+
+        # Generate new key and store to file
         new_key = Fernet.generate_key()
-        keyring.set_password("agent-browser-vault", "master-key", new_key.decode())
+        VAULT_MASTER_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        VAULT_MASTER_KEY_FILE.write_bytes(new_key)
+        VAULT_MASTER_KEY_FILE.chmod(0o600)
         self._master_key = new_key
     
     def _load_master_key(self) -> bytes:

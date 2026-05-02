@@ -15,6 +15,12 @@ from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 from proxy_manager import ProxyManager
 from action_history import ActionHistory
+from captcha_solver import (
+    solve_captcha,
+    detect_site_key,
+    TYPE_HCAPTCHA, TYPE_RECAPTCHA_V2, TYPE_RECAPTCHA_V3,
+    TYPE_TURNSTILE, TYPE_CLOUDflare,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -893,6 +899,75 @@ class BrowserAgent:
             logger.warning(f"CAPTCHA iframe check failed: {e}")
             return None
 
+    async def _handle_captcha_iframe(self) -> bool:
+        """T010: Attempt to solve CAPTCHA iframes via configured provider.
+        Returns True if CAPTCHA was detected and solved, False otherwise.
+        """
+        captcha_type = None
+        try:
+            iframes = await self.page.query_selector_all("iframe")
+            for iframe in iframes:
+                try:
+                    src = await iframe.get_attribute("src") or ""
+                    src_lower = src.lower()
+                    if "hcaptcha" in src_lower or "h-captcha" in src_lower:
+                        captcha_type = TYPE_HCAPTCHA
+                    elif "recaptcha" in src_lower or "google.com/recaptcha" in src_lower:
+                        captcha_type = TYPE_RECAPTCHA_V2
+                    elif "turnstile" in src_lower or "cloudflare" in src_lower:
+                        captcha_type = TYPE_TURNSTILE
+                    elif any(d in src_lower for d in ("captcha-delivery", "privacy-mgmt", "data-media")):
+                        captcha_type = TYPE_HCAPTCHA  # treat as hcaptcha default
+
+                    if captcha_type:
+                        box = await iframe.bounding_box()
+                        if box and box["width"] > 10 and box["height"] > 10:
+                            site_key = detect_site_key(self.page, captcha_type)
+                            if site_key:
+                                api_key = os.environ.get("CAPTCHA_API_KEY") or os.environ.get("_2CAPTCHA_API_KEY", "")
+                                provider = os.environ.get("CAPTCHA_PROVIDER", "2captcha")
+                                if api_key:
+                                    logger.info(f"[CAPTCHA] Solving {captcha_type} with {provider}, sitekey={site_key[:20]}...")
+                                    token = await solve_captcha(
+                                        api_key, captcha_type, site_key,
+                                        self.page.url, provider
+                                    )
+                                    if token:
+                                        logger.info(f"[CAPTCHA] Solved — injecting token")
+                                        # Inject the token into the CAPTCHA callback
+                                        await self.page.evaluate(
+                                            f"""(token) => {{
+                                                // Try hCaptcha
+                                                if (window.hcaptcha) window.hcaptcha.submit(token);
+                                                // Try reCAPTCHA
+                                                if (window.___grecaptcha_cfg) {{
+                                                    Object.keys(window.___grecaptcha_cfg.clients).forEach(k => {{
+                                                        window.___grecaptcha_cfg.clients[k].ready?.(token);
+                                                    }});
+                                                }}
+                                                // Try Turnstile
+                                                if (window.turnstile) window.turnstile.submit(token);
+                                                // Try generic callback
+                                                if (window._captcha_callback) window._captcha_callback(token);
+                                                // Generic textarea injection (some sites read from here)
+                                                const textareas = document.querySelectorAll('textarea[name*="captcha"], textarea[id*="captcha"]');
+                                                textareas.forEach(t => t.value = token);
+                                            }}""", token
+                                        )
+                                        await self._human_delay(1.0, 1.5)
+                                        return True
+                                    else:
+                                        logger.warning("[CAPTCHA] Solve returned no token — falling back to dismiss")
+                                else:
+                                    logger.info("[CAPTCHA] No API key — will dismiss iframe")
+                            # Remove the iframe either way
+                            await iframe.evaluate("el => el.remove()")
+                            return False
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"[CAPTCHA] Handle error: {e}")
+        return False
 
     async def _human_scroll(self, direction: str = "down", fraction: float = None):
         """Scroll with human-like randomisation (Phase 3.4).
@@ -1957,7 +2032,14 @@ class BrowserAgent:
                 logger.warning(f"Primary nav failed ({nav_err}), retrying with load strategy")
                 await self.page.goto(url, wait_until="load", timeout=45000)
             # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
-            await self._dismiss_captcha_iframe()
+            captcha_domain = await self._dismiss_captcha_iframe()
+            if captcha_domain:
+                logger.info(f"CAPTCHA iframe detected after navigation — dismissed {captcha_domain}")
+                # T010: attempt solve
+                try:
+                    await self._handle_captcha_iframe()
+                except Exception:
+                    pass
             captcha_wait_count = 0   # BUG-05 fix: track consecutive wait()s for CAPTCHA loops
             consecutive_failures = 0  # Track consecutive step failures — bail after 3
             steps_executed += 1
@@ -2070,10 +2152,17 @@ class BrowserAgent:
                     return
                 exec_start = time.monotonic()
 
-                # BUG-02 fix: before EVERY action, check for CAPTCHA iframes and dismiss.
+                # BUG-02 fix: before EVERY action, check for CAPTCHA iframes and try to solve.
                 captcha_domain = await self._dismiss_captcha_iframe()
                 if captcha_domain:
-                    logger.info(f"CAPTCHA detected during {action} — dismissed {captcha_domain}")
+                    logger.info(f"CAPTCHA iframe detected during {action} — dismissed {captcha_domain}")
+                    # T010: attempt solve (API key may be available)
+                    try:
+                        solved = await self._handle_captcha_iframe()
+                        if solved:
+                            logger.info(f"CAPTCHA solved during {action} — continuing")
+                    except Exception as e:
+                        logger.warning(f"CAPTCHA solve attempt failed: {e}")
 
                 # T011: take before-screenshot for visual diffing
                 before_ss = await self._take_screenshot()

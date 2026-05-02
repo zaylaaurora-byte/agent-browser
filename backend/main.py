@@ -472,6 +472,14 @@ async def agent_status():
     return {"paused": _agent_paused, "session": _agent_running_session}
 
 
+@app.post("/api/supervisor/undo")
+async def supervisor_undo():
+    """Undo the last undoable browser action (supervisor-facing alias)."""
+    if _active_ws_agent and hasattr(_active_ws_agent, 'action_history'):
+        return await _active_ws_agent.undo_last_action()
+    return {"error": "No active agent"}
+
+
 @app.post("/api/history/undo")
 async def undo_last_action():
     """Undo the last undoable browser action."""

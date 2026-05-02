@@ -119,7 +119,7 @@ export function TaskInput({
         </div>
 
         {/* Quick launch chips */}
-        <div className="flex gap-2 px-3 sm:px-4 pb-3 flex-wrap">
+        <div className="flex gap-2 px-3 sm:px-4 pt-2 pb-4 flex-wrap">
           {QUICK_SITES.map((site) => (
             <button
               key={site.name}
