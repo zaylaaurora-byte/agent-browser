@@ -305,6 +305,57 @@ async def get_session(session_id: str):
     return _sessions[session_id]
 
 
+@app.post("/api/sessions/{session_id}/stop")
+async def stop_session(session_id: str):
+    """Stop a running session gracefully (marks as stopped, doesn't kill browser)."""
+    if session_id not in _sessions:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    session = _sessions[session_id]
+    if session["status"] not in ("running", "paused"):
+        return JSONResponse(status_code=400, content={"error": f"Session is not running (status: {session['status']})"})
+    session["status"] = "stopped"
+    session["completed_at"] = datetime.utcnow().isoformat()
+    return {"ok": True, "session_id": session_id, "status": "stopped"}
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session and free its resources."""
+    if session_id not in _sessions:
+        return JSONResponse(status_code=404, content={"error": "Session not found"})
+    session = _sessions.pop(session_id)
+    # Release the session lock if held
+    if session_id in _session_locks:
+        del _session_locks[session_id]
+    return {"ok": True, "session_id": session_id}
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """Return runtime metrics: session counts, engine stats, uptime."""
+    import time
+    now = datetime.utcnow()
+    running = sum(1 for s in _sessions.values() if s["status"] == "running")
+    completed = sum(1 for s in _sessions.values() if s["status"] == "completed")
+    failed = sum(1 for s in _sessions.values() if s["status"] == "failed")
+    stopped = sum(1 for s in _sessions.values() if s["status"] in ("stopped", "paused"))
+
+    # Browser engine from active WS agent if any
+    engine = getattr(_active_ws_agent, "_browser_engine", None) if _active_ws_agent else None
+
+    return {
+        "sessions": {
+            "total": len(_sessions),
+            "running": running,
+            "completed": completed,
+            "failed": failed,
+            "stopped": stopped,
+        },
+        "engine": engine or "no active session",
+        "uptime_since": getattr(get_metrics, "_start_time", now).isoformat(),
+    }
+
+
 # ─── Named Session Persistence Endpoints (Phase 2) ──────────────────────────
 @app.get("/api/persistent-sessions")
 async def list_persistent_sessions():

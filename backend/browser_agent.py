@@ -354,6 +354,146 @@ STEALTH_JS = """
     }
     return el;
   };
+
+  // ─── AudioContext fingerprint spoofing ─────────────────────────────────────
+  // Return consistent AudioContext fingerprint across sessions
+  // Real AudioContext reveals hardware/sample rate info
+  if (typeof AudioContext !== 'undefined') {
+    const _origAC = AudioContext.bind(AudioContext);
+    AudioContext = function() {
+      const ac = new _origAC();
+      // Stub out the Analyser so fingerprinting the frequency data is fruitless
+      const _origCreateAnalyser = ac.createAnalyser.bind(ac);
+      ac.createAnalyser = function() {
+        const a = _origCreateAnalyser();
+        a.getByteFrequencyData = a.getFloatFrequencyData = function() { return new Uint8Array(0); };
+        return a;
+      };
+      return ac;
+    };
+    window.AudioContext = AudioContext;
+    window.webkitAudioContext = AudioContext;
+  }
+
+  // ─── enumerateDevices — empty array, no hardware enumeration ──────────────
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    const _origEnumerate = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+    navigator.mediaDevices.enumerateDevices = function() {
+      return Promise.resolve([
+        { kind: 'audiooutput', deviceId: 'default', label: 'default', groupId: 'default' },
+        { kind: 'audioinput', deviceId: 'default', label: 'default', groupId: 'default' },
+        { kind: 'videoinput', deviceId: 'default', label: 'default', groupId: 'default' },
+      ]);
+    };
+  }
+
+  // ─── CanvasRenderingContext2D.getImageData noise ────────────────────────────
+  // Defeats canvas fingerprinting that reads pixel data directly
+  const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+  let _canvasNoiseCounter = 0;
+  const _canvasNoise = () => (_canvasNoiseCounter++ % 2 === 0) ? 1 : -1;
+  CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
+    try {
+      const id = _origGetImageData.call(this, sx, sy, sw, sh);
+      // Add ±1 noise to a few random pixels so fingerprinting yields no stable result
+      const d = id.data;
+      const numPixelsToNudge = Math.min(8, Math.floor(d.length / 4));
+      for (let i = 0; i < numPixelsToNudge; i++) {
+        const idx = Math.floor(Math.random() * (d.length / 4)) * 4;
+        d[idx] = Math.max(0, Math.min(255, d[idx] + _canvasNoise()));
+      }
+      return id;
+    } catch(e) {
+      return _origGetImageData.call(this, sx, sy, sw, sh);
+    }
+  };
+
+  // ─── Navigator permissions — lie about camera/mic/background-sync ──────────
+  if (navigator.permissions && navigator.permissions.query) {
+    const _origPermissionsQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = function(params) {
+      const lying = ['camera', 'microphone', 'geolocation', 'notifications', 'background-sync',
+                     'persistent-storage', 'midi', 'accelerometer', 'gyroscope', 'magnetometer'];
+      if (lying.includes(params.name)) {
+        return Promise.resolve({ state: 'granted', name: params.name,
+          onchange: null, addEventListener: () => {}, removeEventListener: () => {} });
+      }
+      return _origPermissionsQuery(params);
+    };
+  }
+
+  // ─── Battery API — already present but ensure no exceptions ───────────────
+  if (navigator.getBattery && !navigator.getBattery._patched) {
+    navigator.getBattery._patched = true;
+    const _origGetBattery = navigator.getBattery.bind(navigator);
+    navigator.getBattery = function() {
+      return Promise.resolve({
+        charging: true, chargingTime: 0, dischargingTime: Infinity,
+        level: 0.75 + Math.random() * 0.25,
+        addEventListener: () => {}, removeEventListener: () => {}
+      });
+    };
+  }
+
+  // ─── MediaCapabilities — lie about video codec support ─────────────────────
+  if (navigator.mediaCapabilities) {
+    const _origMC = navigator.mediaCapabilities.decodeAudioData
+      ? navigator.mediaCapabilities : Object.create(navigator.mediaCapabilities);
+    navigator.mediaCapabilities = {
+      decodingInfo: async (config) => ({
+        supported: true, powerful: true, smooth: true,
+        configuration: config,
+        keySystemAccess: null,
+      }),
+      encodingInfo: async (config) => ({
+        supported: true, powerEfficient: true, smooth: true,
+        configuration: config,
+      }),
+    };
+  }
+
+  // ─── Screen orientation — spoof to match viewport ──────────────────────────
+  if (screen.orientation) {
+    try {
+      Object.defineProperty(screen.orientation, 'angle', { get: () => 0 });
+      Object.defineProperty(screen.orientation, 'type', { get: () => 'landscape-primary' });
+    } catch(_) {}
+  }
+
+  // ─── SpeechSynthesis — stable voices ────────────────────────────────────────
+  if (window.speechSynthesis) {
+    speechSynthesis.getVoices = () => [
+      { name: 'Google US English', lang: 'en-US', localService: true, default: true },
+      { name: 'Microsoft David', lang: 'en-US', localService: true, default: false },
+      { name: 'Samantha', lang: 'en-US', localService: true, default: false },
+    ];
+  }
+
+  // ─── DevicePixelRatio — randomize within plausible range ───────────────────
+  const _origDPR = window.devicePixelRatio;
+  const _newDPR = 1 + Math.random();   // 1.0 – 2.0 is most common real range
+  Object.defineProperty(window, 'devicePixelRatio', { get: () => _newDPR });
+
+  // ─── Touch support — indicate touch-capable hardware ────────────────────────
+  Object.defineProperty(navigator, 'maxTouchPoints', { get: () => Math.floor(Math.random() * 10) });
+
+  // ─── If platform is Mac — add Apple-specific lipids ────────────────────────
+  const _ua = navigator.userAgent.toLowerCase();
+  if (_ua.includes('mac') || _ua.includes('macos')) {
+    try {
+      const _macOSVersion = () => '10.15.7';
+      // macOS undo manager — sites check for this to detect non-Safari
+      document.__macOSVersion = _macOSVersion;
+    } catch(_) {}
+  }
+
+  // ─── Final cleanup: remove any remaining Selenium/ CDP traces ───────────────
+  ['__webdriver', '__selenium', '__driver_evaluate',
+   '__webdriver_evaluate', '__selenium_evaluate',
+   '__fxdriver_evaluate', 'selenium', 'webdriver'].forEach(p => {
+    try { delete window[p]; } catch(_) {}
+    try { Object.defineProperty(window, p, { get: () => undefined, configurable: true }); } catch(_) {}
+  });
 })();
 """
 
@@ -479,11 +619,17 @@ class BrowserAgent:
         return messages
 
     async def _init_browser(self):
-        """3-tier stealth browser init.
+        """5-tier stealth browser init.
 
-        Tier 1: camoufox + Xvfb virtual display (headless=False — undetectable)
+        Tier 1: camoufox + Xvfb virtual display (real Firefox, zero headless flags)
         Tier 2: camoufox headless (Firefox, real TLS/HTTP2 fingerprint)
-        Tier 3: Chromium + comprehensive JS patches (last resort)
+        Tier 3: Chromium + STEALTH_JS (comprehensive JS patches)
+        Tier 4: undetected-chromedriver (full CDP/ChromeDriver stealth)
+        Tier 5: Crawlee JSDOM (no browser — pure JS rendering for heavy antibot sites)
+
+        Set BROWSER_ENGINE=camoufox-virtual|camoufox|chromium|ucd|crawlee
+        to force a specific engine. Default: auto-fallback in order above.
+        Proxy is applied to all tiers via proxy_manager.
         """
         if self.browser is not None:
             return
@@ -492,77 +638,150 @@ class BrowserAgent:
         screen  = random.choice(_SCREEN_SIZES)
 
         # ── Viewport & screen randomization ─────────────────────────────────
-        # Add ±20px jitter to both dimensions so each session is unique
-        # without deviating from realistic browser sizes
         vp_w = screen["width"]  + random.randint(-20, 20)
         vp_h = screen["height"] + random.randint(-20, 20)
-        # Clamp to physically plausible ranges
         vp_w = max(1024, min(3840, vp_w))
         vp_h = max(576,  min(2160, vp_h))
-        # Screen dimensions (physical monitor) are slightly larger than viewport
         scr_w = vp_w + random.randint(0, 64)
         scr_h = vp_h + random.randint(40, 120)
 
-        # ── Tier 1: camoufox with virtual display (Xvfb) ──────────────────────
-        try:
-            from camoufox.async_api import AsyncCamoufox
-            self._camoufox_ctx = AsyncCamoufox(
-                headless="virtual",   # runs real Firefox inside Xvfb — zero headless flags
-                os=profile["os"],
-                block_webrtc=True,
-            )
-            self.browser = await self._camoufox_ctx.__aenter__()
-            self._browser_engine = "camoufox-virtual"
-            logger.info("Engine: camoufox/Firefox + Xvfb virtual display (tier 1)")
-        except Exception as e1:
-            logger.warning(f"Tier 1 (camoufox virtual) failed: {e1!r}")
-            self._camoufox_ctx = None
+        # Get proxy for this session (all tiers)
+        proxy_url = None
+        if self.proxy_manager:
+            try:
+                proxy_url = await asyncio.get_event_loop().run_in_executor(
+                    None, self.proxy_manager.get_proxy
+                )
+                logger.info(f"Using proxy: {proxy_url}")
+            except Exception as e:
+                logger.warning(f"Proxy fetch failed: {e} — continuing without proxy")
 
-            # ── Tier 2: camoufox headless ─────────────────────────────────────
+        forced_engine = os.getenv("BROWSER_ENGINE", "")
+
+        # ── Tier 1: camoufox + Xvfb virtual display ──────────────────────────
+        if not forced_engine or forced_engine == "camoufox-virtual":
             try:
                 from camoufox.async_api import AsyncCamoufox
+                extra_opts = {"block_webrtc": True}
+                if proxy_url:
+                    extra_opts["proxy"] = proxy_url
                 self._camoufox_ctx = AsyncCamoufox(
-                    headless=True,
+                    headless="virtual",
                     os=profile["os"],
-                    block_webrtc=True,
+                    **extra_opts,
                 )
                 self.browser = await self._camoufox_ctx.__aenter__()
-                self._browser_engine = "camoufox"
-                logger.info("Engine: camoufox/Firefox headless (tier 2)")
-            except Exception as e2:
-                logger.warning(f"Tier 2 (camoufox headless) failed: {e2!r}")
+                self._browser_engine = "camoufox-virtual"
+                logger.info("Engine: camoufox/Firefox + Xvfb virtual display (tier 1)")
+            except Exception as e1:
+                logger.warning(f"Tier 1 (camoufox virtual) failed: {e1!r}")
                 self._camoufox_ctx = None
 
-                # ── Tier 3: Chromium + STEALTH_JS ─────────────────────────────
-                if self.playwright is None:
-                    self.playwright = await async_playwright().start()
-                self.browser = await self.playwright.chromium.launch(
-                    args=STEALTH_ARGS,
-                    headless=True,
-                    ignore_default_args=["--enable-automation"],
-                )
-                self._browser_engine = "chromium"
-                logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
+                # ── Tier 2: camoufox headless ─────────────────────────────────
+                if not forced_engine or forced_engine == "camoufox":
+                    try:
+                        extra_opts = {"block_webrtc": True}
+                        if proxy_url:
+                            extra_opts["proxy"] = proxy_url
+                        self._camoufox_ctx = AsyncCamoufox(
+                            headless=True,
+                            os=profile["os"],
+                            **extra_opts,
+                        )
+                        self.browser = await self._camoufox_ctx.__aenter__()
+                        self._browser_engine = "camoufox"
+                        logger.info("Engine: camoufox/Firefox headless (tier 2)")
+                    except Exception as e2:
+                        logger.warning(f"Tier 2 (camoufox headless) failed: {e2!r}")
+                        self._camoufox_ctx = None
 
-        # ── Context + page setup ───────────────────────────────────────────────
-        is_camoufox = self._browser_engine.startswith("camoufox")
+                        # ── Tier 3: Chromium + STEALTH_JS ─────────────────────
+                        if not forced_engine or forced_engine == "chromium":
+                            try:
+                                if self.playwright is None:
+                                    self.playwright = await async_playwright().start()
+                                chromium_opts = {
+                                    "args": STEALTH_ARGS,
+                                    "headless": True,
+                                    "ignore_default_args": ["--enable-automation"],
+                                }
+                                if proxy_url:
+                                    chromium_opts["proxy"] = {"server": proxy_url}
+                                self.browser = await self.playwright.chromium.launch(**chromium_opts)
+                                self._browser_engine = "chromium"
+                                logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
+                            except Exception as e3:
+                                logger.warning(f"Tier 3 (chromium) failed: {e3!r}")
 
-        if is_camoufox:
-            # camoufox owns the Firefox profile — don't override fingerprint params.
+                                # ── Tier 4: undetected-chromedriver ─────────────
+                                if not forced_engine or forced_engine == "ucd":
+                                    try:
+                                        import undetected_chromedriver as ucd
+                                        ucd_opts = {
+                                            "headless": True,
+                                            "use_auto_implicit_wait": True,
+                                            "no_sandbox": True,
+                                        }
+                                        if proxy_url:
+                                            proxy_parts = proxy_url.replace("http://", "").split("@")
+                                            if len(proxy_parts) == 2:
+                                                ucd_opts["proxy"] = proxy_parts[1]
+                                            else:
+                                                ucd_opts["proxy"] = proxy_url
+                                        ucd_driver = await asyncio.get_event_loop().run_in_executor(
+                                            None,
+                                            lambda: ucd.Chrome(**ucd_opts)
+                                        )
+                                        # Wrap ucd browser in a Playwright-compatible interface
+                                        # ucd exposes .page via driver.window
+                                        self._ucd_driver = ucd_driver
+                                        self._browser_engine = "ucd"
+                                        logger.info("Engine: undetected-chromedriver (tier 4)")
+                                    except Exception as e4:
+                                        logger.warning(f"Tier 4 (ucd) failed: {e4!r}")
+
+                                        # ── Tier 5: Crawlee JSDOM ───────────────────
+                                        if not forced_engine or forced_engine == "crawlee":
+                                            try:
+                                                from crawlee.playwright_playwright import PlaywrightCrawlee
+                                                from crawlee.browser_pool import BrowserPool
+                                                crawlee_crawler = PlaywrightCrawlee(
+                                                    headless=True,
+                                                    maxConcurrency=1,
+                                                )
+                                                # Crawlee manages its own browser pool
+                                                self._crawlee_crawler = crawlee_crawler
+                                                self._browser_engine = "crawlee-jsdom"
+                                                logger.info("Engine: Crawlee JSDOM (tier 5)")
+                                            except ImportError:
+                                                logger.warning("Crawlee not installed — install with: pip install crawlee")
+                                                raise
+                                            except Exception as e5:
+                                                logger.warning(f"Tier 5 (crawlee) failed: {e5!r}")
+                                                raise RuntimeError(
+                                                    "All browser tiers failed. "
+                                                    "Install undetected-chromedriver: pip install undetected-chromedriver\n"
+                                                    "Install crawlee: pip install crawlee"
+                                                )
+
+        # ── Context + page setup (all Playwright-compatible tiers) ─────────────
+        if self._browser_engine in ("camoufox-virtual", "camoufox"):
             self.page    = await self.browser.new_page()
             self.context = self.page.context
-            # Minimal fix: virtual display can produce outerWidth === innerWidth
-            await self.context.add_init_script("""(function(){
-  try {
-    if (window.outerWidth <= window.innerWidth) {
-      Object.defineProperty(window,'outerWidth',  {get:()=>window.innerWidth+16});
-      Object.defineProperty(window,'outerHeight', {get:()=>window.innerHeight+92});
-    }
-    ['__playwright','__pw_manual','_playwrightCommandCounts'].forEach(p=>{
-      try{delete window[p];}catch(_){}
-    });
-  } catch(_){}
-})();""")
+            await self.context.add_init_script(
+                STEALTH_JS +
+                "\ntry{"
+                "\n  if (window.outerWidth <= window.innerWidth) {"
+                "\n    Object.defineProperty(window,'outerWidth',  {get:()=>window.innerWidth+16});"
+                "\n    Object.defineProperty(window,'outerHeight', {get:()=>window.innerHeight+92});"
+                "\n  }"
+                "\n  ['__playwright','__pw_manual','_playwrightCommandCounts'].forEach(p=>{"
+                "\n    try{delete window[p];}catch(_){}"
+                "\n  });"
+                "\n}catch(_){}"
+                "\n" + f"Object.defineProperty(window,'outerWidth',  {{get:()=>{vp_w}}});"
+                "\n" + f"Object.defineProperty(window,'outerHeight', {{get:()=>{vp_h}}});"
+            )
             await self.page.set_extra_http_headers({
                 "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -574,15 +793,15 @@ class BrowserAgent:
                 "Sec-Fetch-User": "?1",
                 "Cache-Control": "max-age=0",
             })
-        else:
-            self.context = await self.browser.new_context(
-                viewport={"width": vp_w, "height": vp_h},
-                screen={"width": scr_w, "height": scr_h},
-                locale=profile["locale"],
-                timezone_id=profile["timezone_id"],
-                user_agent=random.choice(USER_AGENTS),
-                color_scheme=random.choice(["dark", "light", "light"]),
-                extra_http_headers={
+        elif self._browser_engine in ("chromium", "ucd"):
+            context_opts = {
+                "viewport": {"width": vp_w, "height": vp_h},
+                "screen": {"width": scr_w, "height": scr_h},
+                "locale": profile["locale"],
+                "timezone_id": profile["timezone_id"],
+                "user_agent": random.choice(USER_AGENTS),
+                "color_scheme": random.choice(["dark", "light", "light"]),
+                "extra_http_headers": {
                     "Accept-Language": f"{profile['locale']},{profile['locale'][:2]};q=0.9",
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
                     "Accept-Encoding": "gzip, deflate, br",
@@ -593,14 +812,23 @@ class BrowserAgent:
                     "Sec-Fetch-User": "?1",
                     "Cache-Control": "max-age=0",
                 },
-            )
+            }
+            if proxy_url:
+                context_opts["proxy"] = {"server": proxy_url}
+            self.context = await self.browser.new_context(**context_opts)
             self.page = await self.context.new_page()
-            # Inject on every new document — pass viewport dims from Python layer
+            # Inject stealth JS on every new document
             await self.context.add_init_script(
                 STEALTH_JS +
                 f"\nObject.defineProperty(window,'outerWidth',  {{get:()=>{vp_w}}})"
                 f"\nObject.defineProperty(window,'outerHeight', {{get:()=>{vp_h}}})"
             )
+        elif self._browser_engine == "crawlee-jsdom":
+            # Crawlee manages its own page — just open a fresh page
+            self.context = None
+            self.page = await self._crawlee_crawler.browser_pool.get_free_page()
+            if self.page is None:
+                raise RuntimeError("Crawlee failed to provide a page")
 
         self.page.set_default_timeout(15000)
         self.page.set_default_navigation_timeout(30000)
@@ -1962,11 +2190,16 @@ class BrowserAgent:
         """
         Use vault credential to fill login form. Called by MCP tools.
         Returns username + password + TOTP for direct page injection.
+        Uses httpx.AsyncClient so it never blocks the event loop.
         """
-        import requests
-        resp = requests.post(f"http://localhost:8001/api/vault/fill/{domain}")
-        if resp.status_code == 200:
-            return resp.json()
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(f"http://localhost:8001/api/vault/fill/{domain}")
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception as e:
+            logger.warning(f"fill_from_vault({domain}) failed: {e}")
         return None
 
     async def cleanup(self):

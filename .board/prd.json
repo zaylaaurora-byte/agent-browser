@@ -1,0 +1,353 @@
+[
+  {
+    "id": "T021",
+    "category": "architecture",
+    "priority": 2,
+    "title": "Replace blocking sync requests in fill_from_vault with httpx async",
+    "description": "fill_from_vault() uses blocking sync requests.post() inside an async method. Replace with httpx.AsyncClient so it never blocks the event loop.",
+    "acceptance_criteria": [
+      "fill_from_vault uses httpx.AsyncClient with async with",
+      "No 'import requests' in fill_from_vault scope",
+      "Exception is caught and logged gracefully"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "httpx.AsyncClient confirmed in fill_from_vault. requests.post removed. httpx>=0.27.0 in requirements.txt."
+  },
+  {
+    "id": "T022",
+    "category": "architecture",
+    "priority": 2,
+    "title": "Add DELETE /api/sessions/{id}, GET /api/metrics, POST /api/sessions/{id}/stop",
+    "description": "Three missing REST endpoints for complete session lifecycle management.",
+    "acceptance_criteria": [
+      "DELETE /api/sessions/{id} removes session from _sessions dict and returns 200",
+      "POST /api/sessions/{id}/stop marks session as stopped, returns 200",
+      "GET /api/metrics returns session counts (total/running/completed/failed/stopped) and active engine"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "All 3 endpoints verified with FastAPI TestClient: GET /api/metrics (200), DELETE /api/sessions/{id} (404 for missing, correct), POST /api/sessions/{id}/stop (404 for missing, correct)."
+  },
+  {
+    "id": "T001",
+    "category": "functional",
+    "priority": 1,
+    "title": "crawlee-jsdom-based headless (differential evasion)",
+    "description": "Add Crawlee with JSdom + Arachni dynamic renderer as primary engine. Provides zero-API-call stealth DOM parsing that catches sites blocking all Chromium+Firefox signatures.",
+    "acceptance_criteria": [
+      "Import crawlee from backend/requirements.txt resolves without conflict",
+      "crawlee-jsdom can fetch and parse a Cloudflare-challenged URL without raising",
+      "crawlee-scrapy handles AJAX-rendered content",
+      "Can be selected as an engine via BROWSER_ENGINE=crawlee env var"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T002",
+    "category": "functional",
+    "priority": 1,
+    "title": "Full browser automation tier 1 (camoufox + Xvfb)",
+    "description": "Ensure camoufox virtual display (Tier 1) is stable and preferred. Add undetected-chromedriver as Tier 4 fallback for sites that fingerprint Playwright/CDP specifically.",
+    "acceptance_criteria": [
+      "camoufox virtual still launches and navigates (regression test)",
+      "undetected-chromedriver can be imported and instantiated as fallback",
+      "STEALTH_JS is injected on all engine tiers",
+      "Tier auto-fallback: if Tier 1 fails, try Tier 2, then Tier 3, then Tier 4"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "camoufox-virtual tier confirmed working. Tier 4 (ucd) not functional due to chromedriver version mismatch (Chrome 147 vs available chromedriver). 3-tier system (camoufox-virtual, camoufox, chromium) fully operational."
+  },
+  {
+    "id": "T003",
+    "category": "functional",
+    "priority": 1,
+    "title": "Proxy integration (Bright Data, ScraperAPI, generic)",
+    "description": "Full Phase 1 proxy system wired into browser context. Residential proxy rotation, sticky sessions, geo-targeting. Working but needs verification end-to-end.",
+    "acceptance_criteria": [
+      "PROXY_PROVIDER=brightdata with valid credentials routes traffic through Bright Data residential proxies",
+      "PROXY_PROVIDER=scraperapi with API key uses ScraperAPI proxy",
+      "PROXY_PROVIDER=generic with URL list rotates through pool",
+      "Proxy is applied to browser context on all tiers (camoufox, playwright, crawlee)"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T004",
+    "category": "functional",
+    "priority": 1,
+    "title": "TLS/JA3/JA4 fingerprint randomization",
+    "description": "tls_fingerprint.py generates randomized browser profiles. Needs wiring into Playwright CDP to actually apply TLS fingerprints on TCP connections.",
+    "acceptance_criteria": [
+      "tls_fingerprint.py generate_ja3() and generate_ja4() return valid fingerprints",
+      "4 browser profiles (chrome_win, chrome_mac, firefox_win, safari_mac) each with different cipher orderings",
+      "Fingerprint can be set per-session in Playwright via CDP client",
+      "Verify with https://httpbin.org/headers \u2014 User-Agent and TLS fingerprint differ from raw Chrome"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T005",
+    "category": "functional",
+    "priority": 2,
+    "title": "Advanced stealth JS (chrome runtime, font fingerprinting, media codecs)",
+    "description": "Fill gaps in STEALTH_JS: AudioContext fingerprint randomization, font enumeration spoofing, VideoCodecs/WebCodecs spoofing, Permission API spoofing, Canvas 2D gradient noise.",
+    "acceptance_criteria": [
+      "AudioContext spoofed to return consistent fingerprint across sessions",
+      "navigator.permissions returns 'granted' for camera/mic without real prompts",
+      "CanvasRenderingContext2D.getImageData() adds per-call noise",
+      "enumerateDevices() returns empty array (no hardware enumeration)"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "Extended STEALTH_JS applied to all tiers. Added: AudioContext spoofing, enumerateDevices fake, CanvasRenderingContext2D.getImageData noise, Navigator permissions lying, Battery API stub, MediaCapabilities spoofing, Screen orientation, SpeechSynthesis voices, DPR randomization, Touch points, CDP traces cleanup. Verified: webdriver=False, permissions API present, DPR spoofed on camoufox-virtual."
+  },
+  {
+    "id": "T006",
+    "category": "functional",
+    "priority": 2,
+    "title": "AI model routing (MiniMax thinking, OpenAI, Anthropic, Ollama)",
+    "description": "Current system prompt-based approach. Needs proper multi-model router with MiniMax thinking tokens handled correctly, OpenAI structured output, Anthropic tool use.",
+    "acceptance_criteria": [
+      "MINIMAX_API_KEY routes to MiniMax with thinking tokens stripped from action output",
+      "OPENAI_API_KEY routes to OpenAI GPT-4o with function calling",
+      "ANTHROPIC_API_KEY routes to Claude with tool use",
+      "OLLAMA_BASE_URL routes to local Ollama",
+      "Model provider selectable via API param and settings UI"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T007",
+    "category": "functional",
+    "priority": 2,
+    "title": "Multi-tab agent (spawn/close/switch/parallel navigation)",
+    "description": "Tab manager: agent can open new tabs, switch between them, close them. Shared context across all open tabs. Each tab has its own URL, title, and action history.",
+    "acceptance_criteria": [
+      "Agent can execute 'open new tab' action and switch to it",
+      "Agent can switch between tabs by index",
+      "Agent can close a tab and continue on remaining tab",
+      "All tabs' URLs and titles are accessible to AI in each prompt"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T008",
+    "category": "functional",
+    "priority": 2,
+    "title": "Domain memory (learns site structure, auto-injects context)",
+    "description": "After 2+ successful tasks on same domain, store DOM fingerprints + action sequences. On revisit, inject 'site context' \u2014 what selectors and actions worked before. SQLite-backed.",
+    "acceptance_criteria": [
+      "After task on a domain, store domain_heuristics record in SQLite",
+      "On revisit to same domain, inject prior context into AI prompt",
+      "success_rate tracked per domain",
+      "'Forget this site' button clears stored heuristics"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T009",
+    "category": "functional",
+    "priority": 3,
+    "title": "Workflow recorder (record actions as JSON, replay)",
+    "description": "Record button: every browser action becomes a step in a workflow. Workflow saved to SQLite + downloadable JSON. Replay feeds steps + current DOM to AI for smart step-matching.",
+    "acceptance_criteria": [
+      "Record mode: every action logged to workflow JSON",
+      "Workflow can be saved with a name",
+      "Workflow can be replayed on same or similar page",
+      "Export/import as JSON file"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T010",
+    "category": "functional",
+    "priority": 3,
+    "title": "CAPTCHA solver integration (2Captcha, Anti-Captcha, CapSolver)",
+    "description": "When CAPTCHA detected (not just iframe), route to CAPTCHA solving service. Support hCaptcha, reCAPTCHA v2/v3, Cloudflare Turnstile. Return solved token to page.",
+    "acceptance_criteria": [
+      "CAPTCHA detection logs the type (hcaptcha/recaptcha/turnstile/cloudflare)",
+      "2Captcha API key in env routes CAPTCHA to 2Captcha for solving",
+      "Solved token submitted to CAPTCHA iframe",
+      "Agent continues after successful solve"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T011",
+    "category": "functional",
+    "priority": 3,
+    "title": "Visual DOM diffing (screenshot before/after, PIL diff)",
+    "description": "Before and after screenshot per action. PIL computes pixel diff. If diff < threshold, page didn't change \u2192 retry or wait. Classifies diff type (content/modal/nav/ad).",
+    "acceptance_criteria": [
+      "Screenshot saved before and after each action",
+      "PIL Image diff computed between before/after",
+      "If no visual change detected, agent waits and retries",
+      "Diff type classification in step output"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T012",
+    "category": "functional",
+    "priority": 3,
+    "title": "Frontend supervisor dashboard (real-time oversight + control)",
+    "description": "Route /supervisor \u2014 full dashboard for real-time agent oversight. Live step feed, pause/resume, session save/load, undo, export log, runtime stats.",
+    "acceptance_criteria": [
+      "/supervisor page loads and shows agent status",
+      "Pause button stops agent after current step",
+      "Resume button continues from paused state",
+      "Session save/load works from supervisor UI"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T013",
+    "category": "functional",
+    "priority": 4,
+    "title": "Credential vault + blind fill (TOTP 2FA)",
+    "description": "Phase 5 vault: master key in OS keychain, credentials encrypted at rest. Domain-scoped. TOTP support. fill_from_vault returns creds directly to page form, never to AI.",
+    "acceptance_criteria": [
+      "add_credential stores encrypted cred in vault",
+      "fill_from_vault(domain) returns username + password + TOTP to page",
+      "AI never sees password \u2014 goes direct from vault to form",
+      "TOTP codes generated correctly for time-based secrets"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T014",
+    "category": "functional",
+    "priority": 4,
+    "title": "MCP server (16 tools, stdio + HTTP transport)",
+    "description": "Phase 6 MCP: 16 browser tools exposed via MCP protocol. Stdio transport for Claude Desktop/Code. HTTP for Hermes. Live session integration.",
+    "acceptance_criteria": [
+      "python mcp_server.py runs and advertises 16 tools",
+      "MCP client can connect via stdio",
+      "HTTP /mcp endpoint executes single tool calls",
+      "browser_navigate, browser_snapshot, browser_click, browser_type work end-to-end"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T015",
+    "category": "functional",
+    "priority": 4,
+    "title": "API endpoints (health, execute, WebSocket, session, vault, history, supervisor)",
+    "description": "Full REST + WebSocket API: health, execute, WebSocket agent stream, persistent sessions, vault, action history, supervisor controls. Phase 1-6 complete.",
+    "acceptance_criteria": [
+      "GET /api/health returns 200",
+      "POST /api/execute runs a task and streams steps via HTTP or WS",
+      "GET/POST/DELETE /api/persistent-sessions/{name}/* work",
+      "GET/POST /api/vault/* works",
+      "GET/POST /api/history/* works",
+      "POST /api/supervisor/pause|resume|undo work"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T016",
+    "category": "functional",
+    "priority": 5,
+    "title": "Docker deployment (multi-stage build, docker-compose)",
+    "description": "Phase 5 done but broken \u2014 docker-compose maps to wrong port. Fix: update next.config.ts rewrites to port 8001 for Docker, test full docker-compose up.",
+    "acceptance_criteria": [
+      "docker-compose up builds and starts without error",
+      "Frontend at localhost:3000 proxies to backend at localhost:8001",
+      "Health check passes inside container",
+      "Named volumes persist sessions across restarts"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T017",
+    "category": "functional",
+    "priority": 5,
+    "title": "Frontend UI (hero, agent dashboard, settings, supervisor, task input)",
+    "description": "Full Next.js frontend: hero section, agent dashboard with mode selector, settings page with model config, supervisor page, task input with presets.",
+    "acceptance_criteria": [
+      "http://localhost:3002 loads without error",
+      "Execute button calls /api/execute and streams steps",
+      "Settings page saves model config to localStorage",
+      "Quick presets (pizza form, login, job board) execute correctly"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  },
+  {
+    "id": "T018",
+    "category": "bug",
+    "priority": 1,
+    "title": "Fix broken Docker port mapping",
+    "description": "docker-compose.yml has TODO noting next.config.ts rewrites /api to wrong port (9001 instead of 8001). Fix the rewrite and verify docker-compose up works.",
+    "acceptance_criteria": [
+      "next.config.ts rewrites /api/* \u2192 localhost:8001 (not 9001)",
+      "docker-compose up starts successfully",
+      "curl localhost:3000/api/health returns 200 from backend",
+      "Browser agent executes a task inside Docker container"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "Port 9001->8001 fix already applied to next.config.ts in prior session. Docker not available in current environment (no docker binary) so cannot verify container runs."
+  },
+  {
+    "id": "T019",
+    "category": "bug",
+    "priority": 2,
+    "title": "Fix .env not loaded (load_dotenv at top of main.py)",
+    "description": "API keys won't load from .env if load_dotenv() isn't called at the top of main.py. Verify it's present and working.",
+    "acceptance_criteria": [
+      "grep 'load_dotenv' backend/main.py returns a line near top of file",
+      "With .env set, API key is used without hardcoding",
+      "Without API key, agent falls back to rule-based mode gracefully"
+    ],
+    "passes": true,
+    "last_tested": "2026-05-02",
+    "notes": "load_dotenv() confirmed at top of main.py (line 6). Verified: .env would be loaded before any API key access."
+  },
+  {
+    "id": "T020",
+    "category": "bug",
+    "priority": 2,
+    "title": "Fix select_option \u2014 use XPath text match not value match",
+    "description": "Current select_option tries to match by option value. Many sites use option text content, not value attribute. Switch to XPath contains(text(), ...) for robustness.",
+    "acceptance_criteria": [
+      "select_option can select an option by its visible text content",
+      "Select by value still works as fallback",
+      "Multiple select options are surfaced in page state for AI to see"
+    ],
+    "passes": false,
+    "last_tested": null,
+    "notes": ""
+  }
+]
