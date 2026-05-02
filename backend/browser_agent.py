@@ -1398,60 +1398,37 @@ class BrowserAgent:
             logger.warning("No API key available, using fallback AI")
             return self._fallback_ai(task, page_content), (time.monotonic() - start) * 1000, "fallback"
 
-        # Use MiniMax native endpoint to avoid OpenAI compat overhead + enable native params
+        # Build messages for this call
+        messages = self._build_ai_messages(task, page_content)
+
+        # Use multi-model router
         last_error = None
         for attempt in range(3):
             try:
-                from openai import OpenAI
-
-                base_url = os.getenv("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
-                client = OpenAI(api_key=api_key, base_url=base_url)
-                messages = self._build_ai_messages(task, page_content)
-
-                # Build extra params — MiniMax-native controls
-                extra = {}
-                extra_headers = {}
-                # MiniMax extended thinking chews through token budget fast
-                # Use very high max_tokens so visible answer text can emerge after thinking exhausts
-                # Disable extended thinking via MiniMax native param in request body
-                if "MiniMax" in model_name or "minimax" in model_name.lower():
-                    extra["thinking_params"] = {"type": "off"}  # MiniMax native param in body
-                    extra_headers["X-MiniMax-Thinking"] = "off"  # also try header variant
-
-                request_kwargs = dict(
-                    model=model_name,
+                from ai_router import call_ai as router_call_ai
+                raw_content, duration_ms, provider = await router_call_ai(
                     messages=messages,
-                    max_tokens=32000,  # Was 2000 — too small for extended thinking + answer
-                    temperature=0.3,
+                    model_name=model_name,
+                    timeout=30.0,
                 )
-                if extra:
-                    request_kwargs["extra_body"] = extra
-                if extra_headers:
-                    request_kwargs["extra_headers"] = extra_headers
-                response = client.chat.completions.create(**request_kwargs)
-                raw_content = response.choices[0].message.content or ""
-                # Strip MiniMax extended thinking tokens that leak into content
                 ai_response = self._clean_ai_response(raw_content)
                 self.conversation_history.append({"role": "user", "content": f"Task: {task}\n\nPage state:\n{page_content[:1000]}"})
                 self.conversation_history.append({"role": "assistant", "content": ai_response})
                 if len(self.conversation_history) > 6:
                     self.conversation_history = self.conversation_history[-6:]
-                return ai_response, (time.monotonic() - start) * 1000, model_name
+                return ai_response, duration_ms, provider
 
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"AI call failed (attempt {attempt + 1}/3): {last_error}")
-                if attempt < 2:  # don't sleep on last attempt
-                    delay = 2 ** attempt  # 1s, 2s
-                    logger.info(f"Retrying in {delay}s...")
-                    await asyncio.sleep(delay)
+                if attempt < 2:
+                    await asyncio.sleep(2 ** attempt)
                     continue
 
         # All retries exhausted — return fallback with error context so UI can show it
         error_msg = f"API error after 3 retries: {last_error}"
         logger.error(error_msg)
         fallback_response = self._fallback_ai(task, page_content)
-        # Tag the fallback so the UI knows this failed
         return f"[ERROR: {last_error[:80]}] {fallback_response}", (time.monotonic() - start) * 1000, "error"
 
     def _fallback_ai(self, task: str, page_content: str) -> str:
