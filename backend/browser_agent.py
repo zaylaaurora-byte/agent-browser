@@ -606,6 +606,21 @@ class BrowserAgent:
                 warnings.append("⚠ LOGIN WALL DETECTED — page requires login/signup. No skip/guest option found. Report to user.")
 
         content_parts = [f"Task: {task}"]
+
+        # ── Domain memory: inject learned context if we've visited this domain before ─
+        try:
+            from domain_memory import inject_domain_context
+            if self.page and not self.page.is_closed():
+                current_url = self.page.url
+                if current_url:
+                    from urllib.parse import urlparse
+                    domain = urlparse(current_url).netloc
+                    if domain:
+                        # Replace the bare task line with domain-memory-enhanced version
+                        content_parts[0] = inject_domain_context(f"Task: {task}", domain)
+        except Exception:
+            pass  # Domain memory is best-effort
+
         if warnings:
             content_parts.append("PAGE WARNINGS: " + " | ".join(warnings))
         if form_lines:
@@ -1743,18 +1758,28 @@ class BrowserAgent:
 
             elif action == "select_option":
                 await self.action_history.capture_snapshot(action)
-                # arg format: "selector, value"
+                # arg format: "selector, value" OR "selector, label=text"
                 parts = arg.rsplit(",", 1)
                 if len(parts) == 2:
                     selector = parts[0].strip()
-                    value = parts[1].strip()
+                    raw_value = parts[1].strip()
                     try:
                         el = await self.page.query_selector(selector)
                         if el:
-                            await el.select_option(value)
+                            # Check for label=text syntax
+                            if raw_value.startswith("label="):
+                                label_text = raw_value[6:].strip()
+                                await el.select_option(label=label_text)
+                            else:
+                                # Try value match first; if no options found, try label match
+                                try:
+                                    await el.select_option(raw_value)
+                                except Exception as val_err:
+                                    # Fallback: try matching by visible text via XPath
+                                    await el.select_option(label=raw_value)
                             await self._human_delay(0.1, 0.3)
                             result["success"] = True
-                            self.action_history.record_action("select_option", {"selector": selector, "value": value}, "completed", "selected")
+                            self.action_history.record_action("select_option", {"selector": selector, "value": raw_value}, "completed", "selected")
                         else:
                             result["error"] = f"No <select> found at {selector}"
                             self.action_history.record_action("select_option", {"arg": arg}, "failed", result["error"])
@@ -2077,6 +2102,24 @@ class BrowserAgent:
                     steps_executed += 1
 
                     if action == "done":
+                        # ── Record successful task in domain memory ──────────────────
+                        try:
+                            from domain_memory import learn_from_completed_task
+                            from urllib.parse import urlparse
+                            if self.page:
+                                url = self.page.url
+                                domain = urlparse(url).netloc if url else ""
+                                if domain:
+                                    learn_from_completed_task(
+                                        domain=domain,
+                                        url=url,
+                                        task=task,
+                                        successful_selectors=self.action_history.successful_selectors[-20:],
+                                        action_steps=[a for a, _ in self.action_history.history[-20:]]
+                                    )
+                        except Exception:
+                            pass  # Domain memory is best-effort
+
                         yield {
                             "step": step_num,
                             "action": "done",

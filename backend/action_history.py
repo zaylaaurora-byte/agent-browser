@@ -54,6 +54,7 @@ class ActionHistory:
         self.browser = browser_agent
         self.actions: List[ActionEntry] = []
         self.snapshots: List[UndoSnapshot] = []
+        self.successful_selectors: List[str] = []  # selectors that worked, for domain memory
         self._counter = 0
 
     def _next_id(self) -> str:
@@ -181,3 +182,11 @@ class ActionHistory:
         if not self.snapshots:
             return None
         return asdict(self.snapshots[-1])
+
+    def track_selector(self, selector: str, action_name: str):
+        """Record a successful selector for domain memory."""
+        # Store selector with action type for context
+        entry = f"{action_name}:{selector}"
+        self.successful_selectors.append(entry)
+        if len(self.successful_selectors) > 200:
+            self.successful_selectors = self.successful_selectors[-200:]
