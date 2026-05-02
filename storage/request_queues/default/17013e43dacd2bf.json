@@ -1,0 +1,17 @@
+{
+  "unique_key": "http://httpbin.org/html",
+  "url": "http://httpbin.org/html",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "state": 6
+    },
+    "label": "test"
+  },
+  "retry_count": 3,
+  "no_retry": false,
+  "loaded_url": "http://httpbin.org/html",
+  "handled_at": "2026-05-02 05:18:20.006915+00:00"
+}
