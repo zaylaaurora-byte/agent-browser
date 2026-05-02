@@ -636,7 +636,7 @@ async def mcp_post(request: Request):
 @app.websocket("/ws/agent")
 async def websocket_agent(ws: WebSocket):
     """WebSocket for real-time agent interaction. Sessions are tracked server-side."""
-    await ws.accept(max_size=10_000_000)
+    await ws.accept()
     global _active_ws_agent
     agent = None
     current_session_id = None

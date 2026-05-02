@@ -546,6 +546,10 @@ class BrowserAgent:
         # Action history + undo (Phase 6)
         self.action_history = ActionHistory(self)
 
+        # T009: workflow recorder (Phase 7)
+        from workflow_recorder import WorkflowRecorder
+        self.recorder = WorkflowRecorder(self, self.action_history)
+
         # SQLite run history DB (Phase 4)
         self.run_db_id: Optional[int] = None
 
@@ -758,11 +762,10 @@ class BrowserAgent:
                                         # ── Tier 5: Crawlee JSDOM ───────────────────
                                         if not forced_engine or forced_engine == "crawlee":
                                             try:
-                                                from crawlee.playwright_playwright import PlaywrightCrawlee
-                                                from crawlee.browser_pool import BrowserPool
-                                                crawlee_crawler = PlaywrightCrawlee(
+                                                from crawlee.crawlers import PlaywrightCrawler
+                                                crawlee_crawler = PlaywrightCrawler(
                                                     headless=True,
-                                                    maxConcurrency=1,
+                                                    browser_launch_options={"chromium_sandbox": False},
                                                 )
                                                 # Crawlee manages its own browser pool
                                                 self._crawlee_crawler = crawlee_crawler
@@ -1803,6 +1806,37 @@ class BrowserAgent:
                 except Exception as e:
                     result["error"] = f"switch_to_tab failed: {str(e)[:80]}"
 
+            elif action == "open_tab":
+                # arg: optional URL to open in new tab
+                url = arg.strip() if arg else "about:blank"
+                try:
+                    new_page = await self.context.new_page()
+                    if url != "about:blank":
+                        await new_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                    self.page = new_page
+                    await self._human_delay(0.2, 0.5)
+                    result["success"] = True
+                    result["url"] = new_page.url
+                except Exception as e:
+                    result["error"] = f"open_tab failed: {str(e)[:80]}"
+
+            elif action == "close_tab":
+                try:
+                    pages = self.context.pages
+                    current_idx = pages.index(self.page) if self.page in pages else -1
+                    await self.page.close()
+                    remaining = [p for p in pages if not p.is_closed()]
+                    if remaining:
+                        self.page = remaining[0]
+                        await self.page.bring_to_front()
+                    else:
+                        # No tabs left — create a blank one
+                        self.page = await self.context.new_page()
+                    result["success"] = True
+                    result["remaining_tabs"] = len(remaining)
+                except Exception as e:
+                    result["error"] = f"close_tab failed: {str(e)[:80]}"
+
             elif action == "get_text":
                 try:
                     el = await self.page.query_selector(arg)
@@ -2041,6 +2075,9 @@ class BrowserAgent:
                 if captcha_domain:
                     logger.info(f"CAPTCHA detected during {action} — dismissed {captcha_domain}")
 
+                # T011: take before-screenshot for visual diffing
+                before_ss = await self._take_screenshot()
+
                 try:
                     result = await asyncio.wait_for(
                         self._execute_action(action, arg),
@@ -2049,6 +2086,40 @@ class BrowserAgent:
                 except asyncio.TimeoutError:
                     result = {"success": False, "error": f"Step timed out after 30s (action: {action})"}
                 exec_ms = int((time.monotonic() - exec_start) * 1000)
+
+                # T011: compute visual diff after every successful action
+                diff_info = {}
+                retry_for_no_change = False
+                if result["success"] and before_ss and action not in ("screenshot", "done", "wait"):
+                    try:
+                        from visual_diff import pixels_changed
+                        after_ss = await self._take_screenshot()
+                        pct, dtype, dinfo = pixels_changed(before_ss, after_ss)
+                        diff_info = {
+                            "diff_pct":     round(pct * 100, 2),
+                            "diff_type":    dtype,
+                            "diff_significant": pct >= 0.05,
+                        }
+                        result["_visual_diff"] = diff_info
+                        # T011: no visual change → wait then retry same action once
+                        if dtype in ("none", "minimal"):
+                            retry_for_no_change = True
+                    except Exception:
+                        pass  # diff is best-effort
+
+                # T011: no visual change → wait 1.5s then re-check
+                if retry_for_no_change:
+                    await asyncio.sleep(1.5)
+                    after_ss = await self._take_screenshot()
+                    pct2, dtype2, _ = pixels_changed(before_ss, after_ss)
+                    if dtype2 in ("none", "minimal"):
+                        await asyncio.sleep(2.0)
+                        retry_ss = await self._take_screenshot()
+                        pct3, dtype3, _ = pixels_changed(before_ss, retry_ss)
+                        if dtype3 in ("none", "minimal"):
+                            observation = (f"[No visual change after {action}] "
+                                          f"Page may be blocked or action had no effect. "
+                                          f"Proceeding anyway — diff_type={dtype3}, pct={round(pct3*100,2)}%")
 
                 # If this is get_text or evaluate, carry the answer through
                 answer_val = result.get("answer", "")
@@ -2130,6 +2201,7 @@ class BrowserAgent:
                         "observation": observation,
                         "screenshot": screenshot,
                         "error": None,
+                        "visual_diff": diff_info if diff_info else None,
                     }
 
                     # If get_text/evaluate, surface the extracted value in observation

@@ -5,6 +5,7 @@ uvicorn[standard]>=0.30.0
 # Browser engines
 playwright>=1.48.0
 camoufox>=0.4.11
+crawlee>=1.6.0
 
 # Redis & Celery
 redis>=5.0.0

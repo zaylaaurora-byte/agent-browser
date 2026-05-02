@@ -1,0 +1,16 @@
+{
+  "unique_key": "https://example.com",
+  "url": "https://example.com",
+  "method": "GET",
+  "payload": null,
+  "headers": {},
+  "user_data": {
+    "__crawlee": {
+      "state": 6
+    }
+  },
+  "retry_count": 3,
+  "no_retry": false,
+  "loaded_url": "https://example.com/",
+  "handled_at": "2026-05-02 05:03:55.348776+00:00"
+}

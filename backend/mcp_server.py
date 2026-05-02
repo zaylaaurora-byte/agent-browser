@@ -225,6 +225,28 @@ def _make_tools() -> list[Tool]:
                 "required": ["tab_id"],
             },
         ),
+        Tool(
+            name="browser_open_tab",
+            description="Open a new browser tab. Optionally navigate to a URL.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Optional URL to open in the new tab. Defaults to about:blank.",
+                        "default": "about:blank",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="browser_close_tab",
+            description="Close the current browser tab. Switches to the next available tab automatically.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
         # ── Session management ───────────────────────────────────────────────────
         Tool(
             name="browser_session_save",
@@ -272,6 +294,55 @@ def _make_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {},
+            },
+        ),
+        # ── Workflow recorder ─────────────────────────────────────────────────────
+        Tool(
+            name="workflow_start_recording",
+            description="Start recording browser actions as a reusable workflow.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Workflow name"},
+                },
+            },
+        ),
+        Tool(
+            name="workflow_stop_recording",
+            description="Stop recording and return captured steps.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name="workflow_save",
+            description="Save the current recording to SQLite and assign a workflow ID.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Workflow name"},
+                    "description": {"type": "string", "description": "Optional description"},
+                },
+            },
+        ),
+        Tool(
+            name="workflow_list",
+            description="List all saved workflows from the SQLite database.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
+        Tool(
+            name="workflow_replay",
+            description="Replay a saved workflow on the current page.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string", "description": "Workflow ID to replay"},
+                    "match_strategy": {"type": "string", "description": "skip|fuzzy|exact"},
+                },
             },
         ),
     ]
@@ -506,6 +577,41 @@ async def _call_browser_switch_tab(agent: Any, arguments: dict) -> list[TextCont
         return [TextContent(type="text", text=f"Switch tab failed: {e}")]
 
 
+async def _call_browser_open_tab(agent: Any, arguments: dict) -> list[TextContent]:
+    url = arguments.get("url", "about:blank")
+    if not agent.page or not agent.context:
+        return [TextContent(type="text", text="Error: No active browser session.")]
+
+    try:
+        new_page = await agent.context.new_page()
+        if url != "about:blank":
+            await new_page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        agent.page = new_page
+        await agent._human_delay(0.2, 0.5)
+        return [TextContent(type="text", text=f"Opened new tab: {new_page.url}")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Open tab failed: {e}")]
+
+
+async def _call_browser_close_tab(agent: Any, arguments: dict) -> list[TextContent]:
+    if not agent.page or not agent.context:
+        return [TextContent(type="text", text="Error: No active browser session.")]
+
+    try:
+        pages = agent.context.pages
+        current_idx = pages.index(agent.page) if agent.page in pages else -1
+        await agent.page.close()
+        remaining = [p for p in pages if not p.is_closed()]
+        if remaining:
+            agent.page = remaining[0]
+            await agent.page.bring_to_front()
+        else:
+            agent.page = await agent.context.new_page()
+        return [TextContent(type="text", text=f"Closed tab. {len(remaining)} tab(s) remaining.")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Close tab failed: {e}")]
+
+
 async def _call_browser_session_save(agent: Any, arguments: dict) -> list[TextContent]:
     name = arguments["name"]
     if not agent:
@@ -570,6 +676,60 @@ async def _call_browser_undo(agent: Any, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=f"Undo not available: {e}")]
 
 
+# ── Workflow recorder ─────────────────────────────────────────────────────────
+async def _call_workflow_start_recording(agent: Any, arguments: dict) -> list[TextContent]:
+    name = arguments.get("name", "Untitled Workflow")
+    try:
+        agent.recorder.start_recording(name)
+        return [TextContent(type="text", text=f"Recording started: {name}")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Start recording failed: {e}")]
+
+
+async def _call_workflow_stop_recording(agent: Any, arguments: dict) -> list[TextContent]:
+    try:
+        steps = agent.recorder.stop_recording()
+        return [TextContent(type="text", text=f"Recording stopped. {len(steps)} steps captured.")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Stop recording failed: {e}")]
+
+
+async def _call_workflow_save(agent: Any, arguments: dict) -> list[TextContent]:
+    name = arguments.get("name", "Untitled")
+    description = arguments.get("description", "")
+    try:
+        wid = agent.recorder.save_workflow(name, description)
+        return [TextContent(type="text", text=f"Workflow saved: '{name}' (id={wid}, {len(agent.recorder.steps)} steps)")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Save workflow failed: {e}")]
+
+
+async def _call_workflow_list(agent: Any, arguments: dict) -> list[TextContent]:
+    try:
+        wfs = agent.recorder.list_workflows()
+        if not wfs:
+            return [TextContent(type="text", text="No saved workflows.")]
+        lines = [f"ID: {w['id']} | {w['name']} | {w['updated_at']}" for w in wfs]
+        return [TextContent(type="text", text="\n".join(lines))]
+    except Exception as e:
+        return [TextContent(type="text", text=f"List workflows failed: {e}")]
+
+
+async def _call_workflow_replay(agent: Any, arguments: dict) -> list[TextContent]:
+    import json
+    workflow_id = arguments.get("workflow_id")
+    match_strategy = arguments.get("match_strategy", "skip")
+    try:
+        results = await agent.recorder.replay(agent, workflow_id=workflow_id,
+                                              match_strategy=match_strategy)
+        completed = sum(1 for r in results if r["status"] == "completed")
+        return [TextContent(type="text",
+                            text=f"Replay done: {completed}/{len(results)} steps completed.\n"
+                                 + json.dumps(results[:3], indent=2)[:500] + "...")]
+    except Exception as e:
+        return [TextContent(type="text", text=f"Replay failed: {e}")]
+
+
 # ── Tool dispatch map ────────────────────────────────────────────────────────
 
 _TOOL_HANDLERS = {
@@ -578,17 +738,24 @@ _TOOL_HANDLERS = {
     "browser_type":          _call_browser_type,
     "browser_press":         _call_browser_press,
     "browser_snapshot":      _call_browser_snapshot,
-    "browser_screenshot":    _call_browser_screenshot,
+    "browser_screenshot":   _call_browser_screenshot,
     "browser_extract_content": _call_browser_extract_content,
     "browser_scroll":        _call_browser_scroll,
     "browser_back":          _call_browser_back,
     "browser_wait_for":      _call_browser_wait_for,
     "browser_list_tabs":     _call_browser_list_tabs,
     "browser_switch_tab":    _call_browser_switch_tab,
+    "browser_open_tab":      _call_browser_open_tab,
+    "browser_close_tab":     _call_browser_close_tab,
     "browser_session_save":  _call_browser_session_save,
     "browser_session_load":  _call_browser_session_load,
     "browser_get_page_info": _call_browser_get_page_info,
     "browser_undo":          _call_browser_undo,
+    "workflow_start_recording": _call_workflow_start_recording,
+    "workflow_stop_recording":  _call_workflow_stop_recording,
+    "workflow_save":            _call_workflow_save,
+    "workflow_list":            _call_workflow_list,
+    "workflow_replay":          _call_workflow_replay,
 }
 
 

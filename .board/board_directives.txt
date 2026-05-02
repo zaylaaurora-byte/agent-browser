@@ -1,0 +1,3 @@
+1. Run init.sh to verify project health — fix any failures before doing new work
+2. Implement T001 (crawlee-jsdom headless): install crawlee, verify it can fetch a Cloudflare-challenged URL, wire BROWSER_ENGINE=crawlee env var
+3. Implement T004 (TLS/JA3/JA4 fingerprint): verify tls_fingerprint.py generate_ja3()/generate_ja4() work, wire into Playwright CDP, verify with httpbin.org/headers
