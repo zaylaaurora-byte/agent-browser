@@ -31,6 +31,8 @@ from route_interceptor import RouteInterceptor, ChallengeType
 from nodriver_bridge import NodriverBridge
 # T031: Site-specific antibot bypass patterns
 from site_overrides import match_domain, apply_site_override, get_override_for_url
+# T044: Extreme antibot escalation engine (8-tier fallback chain)
+from antibot_escalation import AntibotEscalation, EscalationTier, ChallengeCategory
 
 logger = logging.getLogger(__name__)
 
@@ -579,6 +581,11 @@ class BrowserAgent:
         self._challenge_escalation: bool = False
         self._challenge_domain: str = ""
         self._challenge_type: Optional[ChallengeType] = None
+
+        # T044: Antibot escalation engine — 8-tier fallback chain
+        self._escalation: Optional[AntibotEscalation] = None
+        self._escalation_max_tries: int = 6  # max escalation attempts per session
+        self._escalation_tries: int = 0
 
         # SQLite run history DB (Phase 4)
         self.run_db_id: Optional[int] = None
@@ -2195,34 +2202,155 @@ class BrowserAgent:
             page_title_val = await self.page.title() if self.page else ""
             page_url = page_data.get("url", "")
 
-            # T027 + T030: Check route interceptor for mid-session challenge detection
-            # If a challenge was detected mid-session, escalate to tier retry
+            # T044: Challenge detection — route interceptor + AI screenshot analysis
+            # If a challenge is detected mid-session, run the 8-tier escalation engine
+            challenge_detected = False
+            escalation_result = None
+            if self._escalation is None:
+                self._escalation = AntibotEscalation(self)
+
             if self._route_interceptor and self._route_interceptor.should_escalate(page_url):
-                logger.warning(
-                    f"[ChallengeEscalation] Challenge detected on {self._route_interceptor.get_domain_key(page_url)} "
-                    f"during step {step_num} — signaling tier fallback"
+                challenge_detected = True
+                logger.warning(f"[ChallengeEscalation] Challenge detected mid-session on {page_url}")
+                screenshot = await self._take_screenshot()
+                escalation_result = await self._escalation.escalate(
+                    reason="route_interceptor_challenge",
+                    page=self.page,
+                    screenshot_b64=screenshot,
                 )
-                challenge_info = self._route_interceptor.get_domain_challenge(page_url)
-                challenge_type_str = challenge_info.challenge_type.value if challenge_info else "unknown"
+            else:
+                # T044: Also proactively scan for challenge page via title/body + AI screenshot
+                title_lower = page_title_val.lower()
+                url_lower = page_url.lower()
+                challenge_keywords = ["blocked", "security check", "access denied",
+                                     "forbidden", "checking your browser", "captcha",
+                                     "turnstile", "cloudflare", "ddos guard"]
+                for kw in challenge_keywords:
+                    if kw in title_lower or kw in url_lower:
+                        challenge_detected = True
+                        logger.warning(f"[ChallengeEscalation] Challenge keyword '{kw}' in title/url: {page_title_val}")
+                        screenshot = await self._take_screenshot()
+                        escalation_result = await self._escalation.escalate(
+                            reason=f"keyword_detected:{kw}",
+                            page=self.page,
+                            screenshot_b64=screenshot,
+                        )
+                        break
+
+            # T044: Execute escalation — not just signal, ACT
+            if challenge_detected and escalation_result and escalation_result["action"] != "continue":
+                self._escalation_tries += 1
+                if self._escalation_tries > self._escalation_max_tries:
+                    yield {
+                        "step": step_num,
+                        "action": "done",
+                        "argument": f"Max escalation attempts ({self._escalation_max_tries}) reached. Site is blocking all browser tiers.",
+                        "status": "completed",
+                        "url": page_url,
+                        "page_title": page_title_val,
+                        "model": model_name,
+                        "engine": self._browser_engine,
+                        "duration_ms": 0,
+                        "ai_reasoning": f"All {self._escalation_max_tries} escalation tiers exhausted. This site blocks all known browser automation approaches.",
+                        "observation": escalation_result["reason"],
+                        "screenshot": await self._take_screenshot(),
+                        "answer": escalation_result["reason"],
+                    }
+                    return
+
+                action = escalation_result["action"]
+                tier = escalation_result["tier"]
+
+                # Yield the escalation decision as a step
                 yield {
                     "step": step_num,
-                    "action": "challenge_escalate",
-                    "argument": self._challenge_domain or page_url,
+                    "action": f"escalate:{action}",
+                    "argument": escalation_result["reason"],
                     "status": "thinking",
                     "url": page_url,
                     "page_title": page_title_val,
-                    "model": "playwright",
+                    "model": "escalation",
                     "engine": self._browser_engine,
                     "duration_ms": 0,
-                    "ai_reasoning": f"Anti-bot challenge ({challenge_type_str}) detected mid-session. Escalating to higher tier.",
-                    "observation": f"Challenge detected: {challenge_type_str}. Consider switching to a more stealthy browser engine or using proxy rotation.",
+                    "ai_reasoning": escalation_result["reason"],
+                    "observation": f"Escalation tier {tier.value}: {escalation_result['reason']}",
                     "screenshot": await self._take_screenshot(),
-                    "challenge_type": challenge_type_str,
+                    "escalation_tier": tier.value,
                 }
-                # Reset escalation flag so we don't re-yield the same challenge
-                self._challenge_escalation = False
-                # NOTE: Actual tier switching requires session restart. The AI will
-                # see this step and can decide to retry or change strategy.
+
+                # ── Execute the escalation ────────────────────────────────────
+                escalation_success = False
+
+                if action == "solve_captcha":
+                    from antibot_escalation import ChallengeCategory
+                    solve_result = await self._escalation.solve_captcha(
+                        self.page,
+                        ChallengeCategory(escalation_result["details"].get("challenge_type", "unknown")),
+                    )
+                    escalation_success = solve_result.get("success", False)
+                    if escalation_success:
+                        await asyncio.sleep(2)
+
+                elif action == "rotate_proxy_and_solve_captcha":
+                    # Rotate proxy
+                    if self.proxy_manager:
+                        self.proxy_manager.record_failure()
+                    screenshot = await self._take_screenshot()
+                    solve_result = await self._escalation.solve_captcha(
+                        self.page,
+                        ChallengeCategory(escalation_result["details"].get("challenge_type", "unknown")),
+                    )
+                    escalation_success = solve_result.get("success", False)
+                    if escalation_success:
+                        await asyncio.sleep(2)
+
+                elif action == "restart_browser":
+                    # Full restart: save cookies, close, relaunch, restore
+                    escalation_success = await self._escalate_restart_browser()
+                    if escalation_success:
+                        await asyncio.sleep(1)
+
+                elif action == "switch_engine":
+                    target_engine = escalation_result["details"].get("engine", "chromium")
+                    escalation_success = await self._escalate_switch_engine(target_engine)
+                    if escalation_success:
+                        await asyncio.sleep(1)
+
+                elif action == "session_warm_up":
+                    escalation_success = await self._escalate_session_warmup()
+
+                elif action == "unblocker_proxy":
+                    escalation_success = await self._escalate_unblocker_proxy()
+
+                elif action == "give_up":
+                    yield {
+                        "step": step_num,
+                        "action": "done",
+                        "argument": escalation_result["reason"],
+                        "status": "completed",
+                        "url": page_url,
+                        "page_title": page_title_val,
+                        "model": model_name,
+                        "engine": self._browser_engine,
+                        "duration_ms": 0,
+                        "ai_reasoning": escalation_result["reason"],
+                        "observation": escalation_result["details"].get("recommendation", ""),
+                        "screenshot": await self._take_screenshot(),
+                        "answer": escalation_result["reason"],
+                    }
+                    return
+
+                # After escalation attempt, verify page changed (challenge gone?)
+                if escalation_success:
+                    await asyncio.sleep(2)
+                    new_title = await self.page.title() if self.page else ""
+                    new_url = self.page.url if self.page else page_url
+                    logger.info(f"[ChallengeEscalation] After escalation — new title: '{new_title}' url: {new_url}")
+                    # If challenge still there, continue escalation loop (don't re-call AI)
+                    still_blocked = any(kw in new_title.lower() for kw in ["blocked", "security check", "access denied", "captcha", "cloudflare"])
+                    if still_blocked:
+                        step_num -= 1  # don't count this as a step
+                        continue
 
             # Build observation summary for frontend
             form_fields = list(page_data.get("form", {}).keys())
@@ -2577,3 +2705,210 @@ class BrowserAgent:
         except Exception:
             pass
         self.playwright = None
+
+    # ── T044: 8-tier antibot escalation helpers ──────────────────────────────
+
+    async def _escalate_restart_browser(self) -> bool:
+        """
+        Restart the browser with a fresh proxy, new UA, viewport, and timezone.
+        Preserves session cookies when possible.
+        Called when a challenge is detected mid-session.
+        """
+        import random as _r
+
+        logger.info("[Escalation] Restarting browser with fresh identity...")
+
+        # Save cookies before closing
+        saved_cookies = []
+        if self.context:
+            try:
+                saved_cookies = await self.context.cookies()
+            except Exception as e:
+                logger.warning(f"[Escalation] Could not save cookies: {e}")
+
+        # Close existing browser
+        try:
+            if self._camoufox_ctx is not None:
+                await self._camoufox_ctx.__aexit__(None, None, None)
+            elif self._nodriver_bridge is not None:
+                await self._nodriver_bridge.stop()
+            elif self.browser:
+                await self.browser.close()
+            if self.context:
+                await self.context.close()
+        except Exception as e:
+            logger.warning(f"[Escalation] Browser close error: {e}")
+
+        # Reset browser state
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.playwright = None
+        self._camoufox_ctx = None
+        self._nodriver_bridge = None
+        self._route_interceptor = None
+
+        # Rotate UA + profile for fresh start
+        new_profile = _r.choice(_PROFILES)
+        logger.info(f"[Escalation] New identity: {new_profile}")
+
+        # Re-initialize browser (calls _init_browser which picks fresh tier)
+        try:
+            await self._init_browser()
+            # Restore cookies
+            if saved_cookies and self.context:
+                try:
+                    await self.context.add_cookies(saved_cookies)
+                    logger.info(f"[Escalation] Restored {len(saved_cookies)} cookies")
+                except Exception as e:
+                    logger.warning(f"[Escalation] Cookie restore: {e}")
+            # Re-register route interceptor
+            if self.page:
+                ri = RouteInterceptor(log=logger)
+                await ri.register(self.page)
+                self._route_interceptor = ri
+            return True
+        except Exception as e:
+            logger.error(f"[Escalation] Browser restart failed: {e}")
+            return False
+
+    async def _escalate_switch_engine(self, target_engine: str) -> bool:
+        """
+        Switch browser engine (e.g. from chromium to camoufox/firefox).
+        Saves cookies, closes browser, relaunches with new engine.
+        """
+        logger.info(f"[Escalation] Switching to {target_engine}...")
+
+        # Save cookies
+        saved_cookies = []
+        if self.context:
+            try:
+                saved_cookies = await self.context.cookies()
+            except Exception:
+                pass
+
+        # Close
+        try:
+            if self._nodriver_bridge:
+                await self._nodriver_bridge.stop()
+            elif self.browser:
+                await self.browser.close()
+            if self.context:
+                await self.context.close()
+        except Exception:
+            pass
+
+        self.browser = None
+        self.context = None
+        self.page = None
+        self._camoufox_ctx = None
+        self._nodriver_bridge = None
+
+        # Force specific engine via env var
+        import os
+        old_engine = os.environ.get("BROWSER_ENGINE", "")
+        os.environ["BROWSER_ENGINE"] = target_engine
+
+        try:
+            await self._init_browser()
+            # Restore cookies
+            if saved_cookies and self.context:
+                try:
+                    await self.context.add_cookies(saved_cookies)
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            logger.error(f"[Escalation] Engine switch failed: {e}")
+            os.environ["BROWSER_ENGINE"] = old_engine
+            return False
+
+    async def _escalate_session_warmup(self) -> bool:
+        """
+        Session warm-up: visit google.com first, let cookies set,
+        THEN navigate to the target site. This makes the browser look
+        more like a real user who started from Google.
+        """
+        logger.info("[Escalation] Running session warm-up: Google → target...")
+
+        if not self.page:
+            return False
+
+        target_url = self.page.url
+        try:
+            # Navigate to Google
+            await self.page.goto("https://www.google.com", wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(1.5)
+            # Try a search
+            try:
+                search_box = await self.page.query_selector("textarea[name='q'], input[name='q']")
+                if search_box:
+                    await search_box.fill("news")
+                    await asyncio.sleep(0.5)
+                    await search_box.press("Enter")
+                    await asyncio.sleep(2)
+            except Exception:
+                pass
+            # Now navigate to target
+            await self.page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+            await asyncio.sleep(2)
+            return True
+        except Exception as e:
+            logger.error(f"[Escalation] Session warmup failed: {e}")
+            return False
+
+    async def _escalate_unblocker_proxy(self) -> bool:
+        """
+        Switch to Bright Data unblocker proxy for this session.
+        Requires BRIGHTDATA_ZONE env var set to an unblocker-type zone.
+        """
+        logger.info("[Escalation] Switching to Bright Data unblocker proxy...")
+
+        # Save cookies
+        saved_cookies = []
+        if self.context:
+            try:
+                saved_cookies = await self.context.cookies()
+            except Exception:
+                pass
+
+        import os
+        zone = os.getenv("BRIGHTDATA_ZONE", "")
+        if not zone:
+            logger.warning("[Escalation] BRIGHTDATA_ZONE not set — cannot use unblocker proxy")
+            return False
+
+        # Create new proxy manager with brightdata-unblock
+        self.proxy_manager = ProxyManager(
+            provider="brightdata-unblock",
+            api_key=zone,
+        )
+
+        # Close + restart
+        try:
+            if self._nodriver_bridge:
+                await self._nodriver_bridge.stop()
+            elif self.browser:
+                await self.browser.close()
+            if self.context:
+                await self.context.close()
+        except Exception:
+            pass
+
+        self.browser = None
+        self.context = None
+        self.page = None
+        self._camoufox_ctx = None
+        self._nodriver_bridge = None
+
+        try:
+            await self._init_browser()
+            if saved_cookies and self.context:
+                try:
+                    await self.context.add_cookies(saved_cookies)
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            logger.error(f"[Escalation] Unblocker proxy restart failed: {e}")
+            return False
