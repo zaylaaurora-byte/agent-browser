@@ -787,5 +787,19 @@
     "status": "pending",
     "priority": "critical",
     "notes": "Persist task/session/domain state and reuse for jobs/signup/pizza/travel/social flows."
+  },
+  {
+    "id": "T708",
+    "title": "Unify frontend Step type usage to single source of truth",
+    "status": "completed",
+    "priority": "high",
+    "notes": "Replaced duplicate Step interface in activity-feed.tsx with import from src/components/agent/types.ts."
+  },
+  {
+    "id": "T709",
+    "title": "Add backend step payload contract tests",
+    "status": "completed",
+    "priority": "high",
+    "notes": "Added backend/test_step_schema_contract.py covering ctrl echo, shared Step type import, and payload key guards."
   }
 ]

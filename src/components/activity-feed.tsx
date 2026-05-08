@@ -3,24 +3,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, Globe, Clock, Cpu, AlertCircle, CheckCircle2, Eye, Brain } from "lucide-react";
-
-interface Step {
-  step: number;
-  action: string;
-  argument?: string;
-  ai_reasoning?: string;
-  status: string;
-  screenshot?: string;
-  answer?: string;
-  error?: string;
-  url?: string;
-  page_title?: string;
-  duration_ms?: number;
-  model?: string;
-  observation?: string;
-  thinking?: string;
-  timestamp: number;
-}
+import type { Step } from "@/components/agent/types";
 
 const ACTION_CONFIG: Record<string, { icon: string; label: string }> = {
   navigate: { icon: "🌐", label: "Navigate" },
