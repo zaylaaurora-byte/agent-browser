@@ -172,12 +172,41 @@ After all 7 phases complete:
 
 ---
 
+## 🔐 PHASE 8 — STEALTH MAX *(T738)*
+**Goal:** Minimise detection probability across anti-bot stacks while keeping task completion high.
+
+**Deliverables:**
+- [ ] Adaptive fingerprint bundles (UA + TLS profile + Sec-CH hints) rotated per-domain and per-session
+- [ ] Human-behavior profiles by vertical (travel/jobs/social/checkout): cursor curves, micro-pauses, scroll entropy, hesitation windows
+- [ ] Challenge classifier pipeline (Cloudflare/Akamai/DataDome/PerimeterX/Turnstile/hCaptcha) with deterministic fallback ladder
+- [ ] Detectability canary suite (fingerprint test pages + antibot test endpoints) with daily scorecard
+- [ ] Stealth A/B harness: baseline vs adaptive mode on 20-site benchmark with pass-rate and block-rate deltas
+
+**Verification:** Benchmark report with lower challenge/block rate and no regression in success rate.
+
+---
+
+## 🎨 PHASE 9 — UI PRIME *(T739)*
+**Goal:** Deliver a premium operator cockpit UI: dark glassmorphism + parallax + high-legibility control surfaces.
+
+**Deliverables:**
+- [ ] Full dark visual system (tokens for color, blur, elevation, motion, typography scale)
+- [ ] Layered parallax background (GPU-friendly, reduced-motion fallback)
+- [ ] Glass cards with better hierarchy, contrast-safe text, and keyboard-accessible controls
+- [ ] Evidence wall: large screenshot timeline, diff highlight, and outcome badges
+- [ ] Task composer upgrade: template chips, queue builder, inline validation, execution presets
+- [ ] Accessibility pass: WCAG contrast, focus states, larger hit targets, mobile parity
+
+**Verification:** UI review screenshots + build pass + interaction smoke tests.
+
+---
+
 ## 🚦 EXECUTION ORDER
 
 ```
-T731 → T732 → T733 → T734 → T735 → T736 → T737
-Phase1   Phase2  Phase3  Phase4  Phase5  Phase6  Phase7
+T731 → T732 → T733 → T734 → T735 → T736 → T737 → T738 → T739
+Phase1   Phase2  Phase3  Phase4  Phase5  Phase6  Phase7  Phase8  Phase9
 ```
 
 Each phase: verify → commit → push before starting next.  
-Live benchmark (Phase 7) runs only after Phases 1-6 pass their gates.
+Live benchmark (Phase 7) runs only after Phases 1-6 pass their gates; stealth and UI prime finalize after benchmark baseline is stable.

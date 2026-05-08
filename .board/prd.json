@@ -1001,5 +1001,19 @@
     "status": "pending",
     "priority": "high",
     "notes": "Run browser against Booking, TUI, Jet2, LoveHolidays, OnTheBeach, Kayak, Hotels.com, Vrbo \u2014 capture pre-payment totals, screenshots at search/results/detail/checkout stages \u2014 output normalized JSON (site, URL, occupancy, board, total, confidence, images)."
+  },
+  {
+    "id": "T738",
+    "title": "Phase 8 Stealth Max: adaptive fingerprint + behavior mimic + challenge intelligence",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Add adaptive fingerprint rotation (UA+TLS+CH hints bundles), per-domain behavior profiles (human timing, cursor trajectories, scroll entropy), challenge classifier with tiered countermeasures, canary endpoints to score detectability, and stealth A/B benchmark dashboard."
+  },
+  {
+    "id": "T739",
+    "title": "Phase 9 UI Prime: dark glassmorphism + parallax + motion system",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Full UI redesign with premium glassmorphism dark theme, layered parallax scene, motion tokens, component polish, accessibility contrast guarantees, and operator cockpit layout with live evidence wall."
   }
 ]
