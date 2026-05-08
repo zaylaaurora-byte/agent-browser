@@ -50,3 +50,6 @@ Quality score last iteration: 6/10 (18/22 passing)
 - FALLBACK APPLIED: Added T716/T717/T718 directly to .board/prd.json and proceeding with execution plan from these tasks.
 - AUTONOMOUS BLOCKER (task generation): task_expand failed again for T719-T721 with `TypeError: task_expand() got multiple values for argument 'task_id'`.
 - FALLBACK APPLIED: Added T719/T720/T721 directly to .board/prd.json from weakness/dependency scan.
+- PHASE 1 EXECUTION: implemented deterministic reliability tests for BUG-05/BUG-27 in backend/test_phase1_reliability.py.
+- PHASE 1 EXECUTION: refactored wait-loop bailout payload construction into `_build_wait_loop_bailout_step` for direct deterministic testing.
+- VERIFICATION: `python3 -m pytest -q backend/test_step_schema_contract.py backend/test_runtime_memory.py backend/test_phase1_reliability.py` => 9 passed; `npm run build` => success.

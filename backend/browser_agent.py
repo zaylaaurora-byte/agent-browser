@@ -3031,6 +3031,22 @@ class BrowserAgent:
                 return ""
         return ""
 
+    async def _build_wait_loop_bailout_step(self, *, step_num: int, wait_count: int, exec_ms: int, page_url: str, page_title_val: str) -> dict:
+        return {
+            "step": step_num,
+            "action": "done",
+            "argument": f"Stopped: CAPTCHA/site protection detected after {wait_count} consecutive wait() attempts.",
+            "status": "completed",
+            "url": self.page.url if self.page else page_url,
+            "page_title": await self.page.title() if self.page else page_title_val,
+            "duration_ms": exec_ms,
+            "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
+            "ai_reasoning": f"CAPTCHA loop detected: {wait_count} consecutive wait() calls with no page progress. Giving up with a clear message.",
+            "observation": f"CAPTCHA blocker detected after {wait_count} wait attempts.",
+            "screenshot": await self._take_screenshot(),
+            "answer": "CAPTCHA detected — site is blocking automation. Consider using stealth mode or a different target.",
+        }
+
     async def stream_execute(self, task: str, url: str, mode: str) -> AsyncGenerator[dict, None]:
         """Stream step-by-step execution via WebSocket — FULL rich step data"""
         await self._init_browser()
@@ -3526,20 +3542,13 @@ class BrowserAgent:
                     if action == "wait":
                         captcha_wait_count += 1
                         if captcha_wait_count >= 3:
-                            yield {
-                                "step": step_num,
-                                "action": "done",
-                                "argument": f"Stopped: CAPTCHA/site protection detected after {captcha_wait_count} consecutive wait() attempts.",
-                                "status": "completed",
-                                "url": self.page.url if self.page else page_url,
-                                "page_title": await self.page.title() if self.page else page_title_val,
-                                "duration_ms": exec_ms,
-                                "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
-                                "ai_reasoning": f"CAPTCHA loop detected: {captcha_wait_count} consecutive wait() calls with no page progress. Giving up with a clear message.",
-                                "observation": f"CAPTCHA blocker detected after {captcha_wait_count} wait attempts.",
-                                "screenshot": await self._take_screenshot(),
-                                "answer": "CAPTCHA detected — site is blocking automation. Consider using stealth mode or a different target.",
-                            }
+                            yield await self._build_wait_loop_bailout_step(
+                                step_num=step_num,
+                                wait_count=captcha_wait_count,
+                                exec_ms=exec_ms,
+                                page_url=page_url,
+                                page_title_val=page_title_val,
+                            )
                             return
                     else:
                         captcha_wait_count = 0   # reset on non-wait action

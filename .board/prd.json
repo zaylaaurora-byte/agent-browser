@@ -885,5 +885,19 @@
     "status": "pending",
     "priority": "high",
     "notes": "Upgrade safe minors (next/react/eslint-config-next/shadcn + openai/urllib3/cryptography/pydantic) with rollback checkpoints and smoke tests."
+  },
+  {
+    "id": "T722",
+    "title": "Add deterministic BUG-05 harness using mocked planner outputs",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Force consecutive wait actions and assert bailout status/event in stream loop."
+  },
+  {
+    "id": "T723",
+    "title": "Add BUG-27 escalation restart tests with URL re-open assertion",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Cover escalate_unblocker_proxy/escalate_firefox restart paths and post-restart navigation continuity."
   }
 ]
