@@ -705,9 +705,9 @@
   {
     "id": "T050",
     "title": "Add /api/browser-info endpoint returning current engine + health",
-    "status": "pending",
+    "status": "completed",
     "priority": "medium",
-    "notes": "H-01 gap: browser engine logged at startup but no HTTP endpoint exposes it. Add GET /api/browser-info returning {engine, profile, stealth_mode}."
+    "notes": "H-01 gap: browser engine logged at startup but no HTTP endpoint exposes it. FIXED: GET /api/browser-info returns {engine, tls_profile, stealth_mode, status}. Verified with FastAPI TestClient \u2014 returns 200 with correct fields."
   },
   {
     "id": "T051",
@@ -899,5 +899,44 @@
     "status": "pending",
     "priority": "high",
     "notes": "Cover escalate_unblocker_proxy/escalate_firefox restart paths and post-restart navigation continuity."
+  },
+  {
+    "id": "T724",
+    "title": "Add explicit warning logs for swallowed backend exceptions",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Replace silent pass branches in browser_agent.py with structured warning logs and add regression tests for each failure branch."
+  },
+  {
+    "id": "T725",
+    "title": "Execute safe minor dependency refresh wave with lockfile checkpoints",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Upgrade safe minors for npm/pip out-of-date packages, run full tests/build/live smoke, and keep rollback snapshots."
+  },
+  {
+    "id": "T726",
+    "category": "bug",
+    "title": "BUG-02 dead code: duplicate _dismiss_captcha_iframe definitions",
+    "description": "Two _dismiss_captcha_iframe methods defined in BrowserAgent class body. The first (lines ~1359-1366) is session-loading code; the second (~1363-1431) is the real CAPTCHA dismissal. Python class body execution means the second definition wins, but the first is dead code that confuses readers. Lines 1359-1366 (the first definition covering 'self.browser = None' through 'self._nodriver_bridge = None') should be deleted.",
+    "status": "pending",
+    "priority": "medium",
+    "notes": "PLANv2.md line 27 documents this. Source: browser_agent.py class body."
+  },
+  {
+    "id": "T727",
+    "category": "functional",
+    "title": "H-01 browser-info endpoint: wire into frontend supervisor UI",
+    "description": "The GET /api/browser-info endpoint (T050) now returns {engine, tls_profile, stealth_mode, status}. The supervisor/settings frontend should call this endpoint and display the active browser engine and TLS profile so users can see what's running.",
+    "status": "pending",
+    "priority": "low",
+    "notes": "Depends on T050 (completed). Frontend needs to call /api/browser-info and show engine info in supervisor page."
+  },
+  {
+    "id": "T728",
+    "title": "Stage safe minor dependency upgrades with rollback checkpoints",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Apply wanted/minor updates for npm+pip, run pytest/build/smoke after each batch, and keep rollback git checkpoints."
   }
 ]
