@@ -53,3 +53,5 @@ Quality score last iteration: 6/10 (18/22 passing)
 - PHASE 1 EXECUTION: implemented deterministic reliability tests for BUG-05/BUG-27 in backend/test_phase1_reliability.py.
 - PHASE 1 EXECUTION: refactored wait-loop bailout payload construction into `_build_wait_loop_bailout_step` for direct deterministic testing.
 - VERIFICATION: `python3 -m pytest -q backend/test_step_schema_contract.py backend/test_runtime_memory.py backend/test_phase1_reliability.py` => 9 passed; `npm run build` => success.
+- PHASE 1 EXECUTION: added transport parity suite `backend/test_transport_parity.py` covering REST `/api/execute`, WebSocket `/ws/agent`, and MCP `execute_task/get_session` step-shape consistency.
+- VERIFICATION: `python3 -m pytest -q backend/test_transport_parity.py backend/test_step_schema_contract.py backend/test_phase1_reliability.py` => 10 passed; `npm run build` => success.
