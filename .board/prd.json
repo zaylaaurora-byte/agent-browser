@@ -938,5 +938,19 @@
     "status": "pending",
     "priority": "high",
     "notes": "Apply wanted/minor updates for npm+pip, run pytest/build/smoke after each batch, and keep rollback git checkpoints."
+  },
+  {
+    "id": "T729",
+    "title": "Supervisor UI redesign pass for readability and operator flow",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Improve typography contrast/spacing, restructure controls into clear cards, add status rail + action grouping, mobile-safe layout, and visual evidence panel polish."
+  },
+  {
+    "id": "T730",
+    "title": "End-to-end live workflow pack for holiday + pizza + signup + social",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Run real multi-domain flows (holiday checkout evidence, pizza order flow up to payment gate, signup and social action flow), save screenshots + JSON artifacts, and publish benchmark report."
   }
 ]

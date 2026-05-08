@@ -189,6 +189,56 @@ export default function SettingsPage() {
               </div>
             </div>
 
+            {/* Advanced Runtime */}
+            <div className="rounded-2xl glass p-6">
+              <div className="flex items-center gap-2 mb-5">
+                <Shield className="w-4 h-4 text-amber-400" />
+                <h2 className="text-sm font-bold text-zinc-200 uppercase tracking-wider">Advanced Runtime</h2>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold block mb-1.5">Screenshot Interval</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={settings.screenshotInterval}
+                    onChange={(e) => update("screenshotInterval", parseInt(e.target.value) || 1)}
+                    className="w-full bg-black/40 border border-zinc-800/60 rounded-xl px-4 py-3 text-sm font-mono text-zinc-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-all"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold block mb-1.5">Viewport</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      value={settings.viewportWidth}
+                      onChange={(e) => update("viewportWidth", parseInt(e.target.value) || 1920)}
+                      className="w-full bg-black/40 border border-zinc-800/60 rounded-xl px-3 py-3 text-sm font-mono text-zinc-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-all"
+                      placeholder="Width"
+                    />
+                    <input
+                      type="number"
+                      value={settings.viewportHeight}
+                      onChange={(e) => update("viewportHeight", parseInt(e.target.value) || 1080)}
+                      className="w-full bg-black/40 border border-zinc-800/60 rounded-xl px-3 py-3 text-sm font-mono text-zinc-200 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-all"
+                      placeholder="Height"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4">
+                <label className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold block mb-1.5">Custom User Agent</label>
+                <input
+                  type="text"
+                  value={settings.userAgent}
+                  onChange={(e) => update("userAgent", e.target.value)}
+                  placeholder="Optional override user agent"
+                  className="w-full bg-black/40 border border-zinc-800/60 rounded-xl px-4 py-3 text-sm font-mono text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-violet-500/40 transition-all"
+                />
+              </div>
+            </div>
+
             {/* Actions */}
             <div className="flex items-center gap-3">
               <button

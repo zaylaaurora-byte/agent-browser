@@ -64,3 +64,7 @@ Quality score last iteration: 6/10 (18/22 passing)
 - FRONTEND LIVE SMOKE: /supervisor and /settings loaded on dev server (http://127.0.0.1:3000) with expected controls visible.
 - API LIVE SMOKE: /api/health returned status ok; /api/execute completed for https://example.com.
 - BENCHMARK LIVE TEST: Ran `python3 test_20_websites.py` end-to-end against live backend. Result: 20/20 pass (100%), by-category pass all green. Evidence at /home/zayla/Projects/agent-browser/screenshots_live_test/results.json and per-site screenshots in screenshots_live_test/.
+- AUTONOMOUS BLOCKER (task generation): task_expand failed again for T729-T730 with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- FALLBACK APPLIED: Added T729/T730 directly to .board/prd.json.
+- UI UPGRADE: improved supervisor readability (larger typography, contrast, spacing, denser action cards) and expanded settings with Advanced Runtime controls (screenshot interval, viewport, custom user-agent).
+- LIVE WORKFLOW PACK: ran holiday/pizza/signup/social probes via /api/execute deep mode; artifacts saved to /home/zayla/Projects/agent-browser/screenshots_live_test/workflow_pack_results.json.
