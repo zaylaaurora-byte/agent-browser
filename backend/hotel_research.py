@@ -42,7 +42,7 @@ STEALTH_ARGS = [
 
 
 def parse_args():
-    cities = []
+    requested_cities = []
     checkin, checkout, adults = None, None, 2
     children = 0
     child_ages = []
@@ -57,24 +57,37 @@ def parse_args():
                 raw = arg.split("=", 1)[1].strip()
                 child_ages = [int(x.strip()) for x in raw.split(",") if x.strip()]
         else:
-            cities.append(arg)
+            requested_cities.append(arg)
 
-    if not cities:
-        cities = CITIES
+    # Build city list: defaults from CITIES; allow arbitrary user-provided cities (no silent drop)
+    if not requested_cities:
+        cities = [dict(c) for c in CITIES]
     else:
-        cities = [c for c in CITIES if c["city"] in cities]
-        if not cities:
-            print(f"Unknown city(s). Available: {[c['city'] for c in CITIES]}")
-            sys.exit(1)
+        known_by_name = {c["city"].lower(): c for c in CITIES}
+        default_checkin = checkin or CITIES[0]["checkin"]
+        default_checkout = checkout or CITIES[0]["checkout"]
+        cities = []
+        for city_name in requested_cities:
+            known = known_by_name.get(city_name.lower())
+            if known:
+                cities.append(dict(known))
+            else:
+                cities.append({
+                    "city": city_name,
+                    "country": "Unknown",
+                    "checkin": default_checkin,
+                    "checkout": default_checkout,
+                })
 
-    if checkin: [c.update({"checkin": checkin}) for c in cities]
-    if checkout: [c.update({"checkout": checkout}) for c in cities]
+    if checkin:
+        [c.update({"checkin": checkin}) for c in cities]
+    if checkout:
+        [c.update({"checkout": checkout}) for c in cities]
     [c.update({"adults": adults, "children": children}) for c in cities]
 
     if child_ages and len(child_ages) >= children:
         [c.update({"child_ages": child_ages[:children]}) for c in cities]
     elif children > 0:
-        # Default to school-age children if no explicit ages provided
         default_ages = [12, 10, 8, 6, 4, 2]
         [c.update({"child_ages": default_ages[:children]}) for c in cities]
 
@@ -269,6 +282,11 @@ async def research_city(page, dest: dict) -> dict:
             await page.goto(alt_url, wait_until="domcontentloaded", timeout=25000)
             await asyncio.sleep(3)
             title = await page.title()
+
+        # Capture visual evidence screenshot for this city
+        screenshot_file = OUT_DIR / f"{city.lower().replace(' ', '_')}_search.png"
+        await page.screenshot(path=str(screenshot_file), full_page=True)
+        result["screenshot"] = str(screenshot_file)
 
         # Extract hotel prices
         hotels = await extract_prices(page)

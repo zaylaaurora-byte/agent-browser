@@ -29,3 +29,10 @@ BOARD STATUS: 18/22 passing (T001, T004 now passing)
 3. Implement T012 (Frontend supervisor dashboard): /supervisor page loads with status + pause/resume
 Quality score last iteration: 6/10 (18/22 passing)
 ---
+
+=== SESSION NOTE 2026-05-08 ===
+- BLOCKER: task_expand tool still fails with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- Attempted task additions that could not be persisted via tool:
+  1) T600 — multi-site holiday package extractors (TUI, Jet2, LoveHolidays, OnTheBeach) with normalized schema + parser tests.
+  2) T601 — persistent cross-task browser memory profile for arbitrary workflows (jobs/signup/pizza/booking).
+- FALLBACK ACTION TAKEN: continued implementation/testing directly in code and saved evidence artifacts under ~/.agent-browser/hotel-research.
