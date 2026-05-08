@@ -801,5 +801,26 @@
     "status": "completed",
     "priority": "high",
     "notes": "Added backend/test_step_schema_contract.py covering ctrl echo, shared Step type import, and payload key guards."
+  },
+  {
+    "id": "T710",
+    "title": "Stabilize CAPTCHA wait-loop + restart fallback with deterministic regression tests",
+    "status": "pending",
+    "priority": "high",
+    "notes": "BUG-05/BUG-27 markers still present; add tests for consecutive wait bailouts, restart re-navigation, websocket completion semantics."
+  },
+  {
+    "id": "T711",
+    "title": "Dependency refresh lane for backend/frontend with lockfile guard + compatibility matrix",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Outdated npm/pip deps found (next/react/openai/cryptography/etc); add staged upgrade workflow with smoke/build/test gates and rollback snapshot."
+  },
+  {
+    "id": "T712",
+    "title": "Expand cross-domain E2E benchmark to 20 real workflows with evidence pack",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Current tests are narrow; add jobs/signup/pizza/travel/social/instagram coverage with screenshot + JSON artifacts and pass/fail rubric."
   }
 ]

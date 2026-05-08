@@ -41,3 +41,6 @@ Quality score last iteration: 6/10 (18/22 passing)
 - EXECUTED: unified frontend Step type source (activity-feed now imports Step from src/components/agent/types.ts).
 - EXECUTED: added backend/test_step_schema_contract.py and validated schema guard tests.
 - VERIFICATION: `python3 -m pytest -q backend/test_runtime_memory.py backend/test_step_schema_contract.py` => 6 passed; `npm run build` => success.
+- GOAL ORCHESTRATOR BLOCKER (2026-05-08 task-gen): `task_expand` still fails with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- FALLBACK TASKS ADDED MANUALLY TO .board/prd.json: T710 (CAPTCHA wait-loop + restart fallback tests), T711 (dependency refresh lane with lockfile guard), T712 (20-workflow cross-domain benchmark + evidence pack).
+- WEAKNESS EVIDENCE: npm outdated shows next/react/shadcn drift; pip outdated shows openai/cryptography/urllib3/pydantic and others behind latest.
