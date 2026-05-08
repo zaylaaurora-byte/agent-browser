@@ -15,6 +15,7 @@ export interface Step {
   model?: string;
   observation?: string;
   thinking?: string;
+  ctrl?: "pause" | "resume" | "stop";
   timestamp: number;
 }
 
