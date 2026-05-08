@@ -15,12 +15,17 @@ from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
 from proxy_manager import ProxyManager
 from action_history import ActionHistory
+from runtime_memory import RuntimeMemory
 from captcha_solver import (
     solve_captcha,
     detect_site_key,
     TYPE_HCAPTCHA, TYPE_RECAPTCHA_V2, TYPE_RECAPTCHA_V3,
     TYPE_TURNSTILE, TYPE_CLOUDflare,
 )
+# T201/T202: Vision CAPTCHA handler — AI-powered CAPTCHA solving using MiniMax vision
+from vision_captcha_handler import VisionCAPTCHAHandler
+# T205: Proactive visual grid resolver — indexes elements so AI can say "click element 3"
+from ocr_resolver import OCRResolver
 # T023: TLS fingerprint injection
 from tls_inject import TLSInject, merge_fingerprint_headers
 # T024: Enhanced JS spoofing + headless bypass
@@ -518,6 +523,251 @@ STEALTH_JS = """
 SYSTEM_PROMPT = open(os.path.join(os.path.dirname(__file__), "prompts", "system.md")).read()
 
 
+# ── Page Content JS (module-level so _get_page_content can access it) ──
+_PAGE_CONTENT_JS = r"""() => {
+const body = document.body;
+if (!body) return JSON.stringify({error: 'Empty page'});
+
+// ── SPA / dynamic page detection ──────────────────────────────────
+const networkRequests = window.performance && window.performance.getEntries
+? window.performance.getEntriesByType('resource').length : -1;
+const hasMutationObserver = typeof MutationObserver !== 'undefined';
+const hasPendingRequests = document.readyState !== 'complete';
+
+// ── Cookie / consent banner detection ─────────────────────────────
+const cookieBannerSelectors = [
+'[aria-label*="cookie" i]', '[class*="cookie" i]', '[id*="cookie" i]',
+'[class*="consent" i]', '[id*="consent" i]', '[class*="gdpr" i]',
+'[aria-label*="accept" i]', '[aria-label*="allow" i]',
+];
+let cookieBannerDetected = null;
+let cookieBannerText = null;
+for (const sel of cookieBannerSelectors) {
+const el = document.querySelector(sel);
+if (el && window.getComputedStyle(el).display !== 'none') {
+cookieBannerDetected = sel;
+cookieBannerText = el.textContent ? el.textContent.trim().slice(0, 200) : sel;
+break;
+}
+}
+// ── YouTube GDPR consent page ─────────────────────────────────────
+if (window.location.hostname === 'consent.youtube.com' ||
+document.title === 'Before you continue to YouTube' ||
+document.querySelector('[action*="consent"]')) {
+const heading = document.querySelector('h1, h2, [aria-label*="continue"]')?.textContent?.trim() || '';
+const subtext = document.querySelector('p, [class*="body"]')?.textContent?.trim().slice(0, 200) || '';
+const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'))
+.map(b => b.textContent?.trim() || b.value || '').filter(Boolean).slice(0, 5);
+cookieBannerDetected = 'youtube_gdpr';
+cookieBannerText = `GDPR_CONSENT: "${heading}" | "${subtext}" | Buttons: ${buttons.join(', ')}`;
+}
+
+// ── CAPTCHA / Cloudflare detection ───────────────────────────────
+let captchaDetected = null;
+const cfChallenge = document.querySelector('#cf-challenge-center, #challenge-form, .cf-challenge');
+const hcaptcha = document.querySelector('.h-captcha');
+const recaptcha = document.querySelector('.g-recaptcha');
+const genericCaptcha = document.querySelector('[class*="captcha" i], [id*="captcha" i]');
+if (cfChallenge) captchaDetected = 'cloudflare';
+else if (hcaptcha) captchaDetected = 'hcaptcha';
+else if (recaptcha) captchaDetected = 'recaptcha';
+else if (genericCaptcha) captchaDetected = 'generic';
+
+// ── Login wall / auth wall detection ────────────────────────────────
+let loginWall = null;
+const currentUrl = window.location.href.toLowerCase();
+const hasEmailField = !!document.querySelector('input[type="email"], input[name*="email"], input[name*="login"], input[placeholder*="email" i]');
+const hasPasswordField = !!document.querySelector('input[type="password"]');
+const loginKeywords = ['sign in', 'log in', 'login', 'create account', 'sign up', 'register'];
+const pageTextLower = (document.body?.textContent || '').toLowerCase().slice(0, 2000);
+const hasLoginKeyword = loginKeywords.some(kw => pageTextLower.includes(kw));
+const loginUrls = ['/login', '/signin', '/sign-in', '/auth', '/account/login'];
+const hasLoginUrl = loginUrls.some(u => currentUrl.includes(u));
+if ((hasEmailField && hasPasswordField) || (hasLoginUrl && hasLoginKeyword)) {
+const skipLinks = Array.from(document.querySelectorAll('a, button')).filter(el => {
+const t = (el.textContent || '').toLowerCase();
+return ['skip', 'guest', 'browse without', 'continue without', 'later', 'no thanks', 'not now'].some(kw => t.includes(kw));
+});
+loginWall = {
+detected: true,
+url: window.location.href,
+has_skip: skipLinks.length > 0,
+skip_selector: skipLinks[0] ? (skipLinks[0].id ? '#' + skipLinks[0].id : (skipLinks[0].className ? 'a.' + skipLinks[0].className.split(' ')[0] : 'a')) : null
+};
+}
+
+// ── Shadow DOM elements ──────────────────────────────────────────
+const shadowHosts = document.querySelectorAll('*');
+let shadowDomCount = 0;
+for (const el of shadowHosts) {
+if (el.shadowRoot) shadowDomCount++;
+}
+
+// ── Modal / popup / overlay dialogs ──────────────────────────────
+// Detect any visible modal, dialog, overlay, or full-screen popup
+let popupDialog = null;
+const modalSelectors = [
+'[role="dialog"]', '[role="alertdialog"]', '.modal', '.Modal',
+'[class*="modal"]', '[class*="Modal"]', '[class*="overlay"]',
+'[class*="Overlay"]', '[class*="popup"]', '[class*="Popup"]',
+'[class*="consent"]', '[class*="Consent"]', '[id*="consent"]',
+'[id*="Consent"]', '[aria-modal="true"]', '.遮罩', // Chinese "mask"
+'.cookies', '.Cookies', '.gdpr', '.GDPR',
+];
+for (const sel of modalSelectors) {
+const el = document.querySelector(sel);
+if (el) {
+const style = window.getComputedStyle(el);
+const isVisible = style.display !== 'none' &&
+style.visibility !== 'hidden' &&
+el.offsetWidth > 0 &&
+el.offsetHeight > 0;
+if (isVisible) {
+const heading = el.querySelector('h1, h2, h3, [aria-label]')?.textContent?.trim().slice(0, 100) || '';
+const body = el.textContent?.trim().slice(0, 300) || '';
+popupDialog = { selector: sel, heading, body };
+break;
+}
+}
+}
+// Also check for full-screen wrappers (YouTube consent style)
+if (!popupDialog) {
+const body = document.body;
+if (body && body.offsetWidth > 0 && body.offsetHeight > 0) {
+const children = Array.from(body.children);
+for (const child of children) {
+const style = window.getComputedStyle(child);
+if (child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE' &&
+style.position === 'fixed' && child.offsetWidth > body.offsetWidth * 0.5) {
+popupDialog = {
+selector: child.className ? `.${child.className.split(' ')[0]}` : child.tagName,
+heading: child.querySelector('h1,h2')?.textContent?.trim().slice(0, 100) || '',
+body: child.textContent?.trim().slice(0, 300) || ''
+};
+break;
+}
+}
+}
+}
+
+// ── Iframe count ───────────────────────────────────────────────
+const iframes = document.querySelectorAll('iframe');
+const iframeInfo = Array.from(iframes).map(f => ({
+src: f.src ? f.src.slice(0, 80) : '',
+visible: f.offsetWidth > 0 && f.offsetHeight > 0,
+}));
+
+// ── ARIA live regions ───────────────────────────────────────────
+const ariaLive = Array.from(document.querySelectorAll('[aria-live]'))
+.map(el => ({ tag: el.tagName.toLowerCase(), text: el.textContent.trim().slice(0, 60), politeness: el.getAttribute('aria-live') }));
+
+// ── Select options ─────────────────────────────────────────────
+const selectMap = {};
+document.querySelectorAll('select').forEach(sel => {
+const name = sel.getAttribute('name') || sel.id || sel.className || sel.tagName.toLowerCase();
+const options = Array.from(sel.options).map(opt => ({
+text: opt.text.trim().slice(0, 60),
+value: opt.value,
+selected: opt.selected,
+}));
+selectMap[name] = { selector: (sel.getAttribute('name') ? `select[name="${sel.getAttribute('name')}"]` : sel.id ? `#${sel.id}` : sel.tagName.toLowerCase()), options };
+});
+
+// ── Image alt text ─────────────────────────────────────────────
+const images = Array.from(document.images).slice(0, 20).map(img => ({
+alt: img.alt || '',
+src: img.src ? img.src.slice(0, 80) : '',
+width: img.naturalWidth,
+}));
+
+const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+acceptNode: (node) => {
+const style = window.getComputedStyle(node.parentElement);
+return style.display !== 'none' && style.visibility !== 'hidden'
+? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+}
+});
+
+const texts = [];
+while (walker.nextNode()) {
+const t = walker.currentNode.textContent.trim();
+if (t) texts.push(t);
+}
+
+const formMap = {};
+document.querySelectorAll('input, select, textarea').forEach(el => {
+const name = el.getAttribute('name') || el.id || '';
+const type = el.getAttribute('type') || '';
+const value = el.getAttribute('value') || '';
+let label = '';
+const forAttr = el.getAttribute('id');
+if (forAttr) {
+const lbl = document.querySelector('label[for="' + forAttr + '"]');
+if (lbl) label = lbl.textContent.trim();
+}
+if (!label && name) {
+const lbl = document.querySelector('label[for="' + name + '"]');
+if (lbl) label = lbl.textContent.trim();
+}
+const hint = type === 'radio' || type === 'checkbox' ? `[value="${value}"]` : '';
+const selector = name ? `${el.tagName.toLowerCase()}[name="${name}"]` : (el.id ? '#' + el.id : el.tagName.toLowerCase());
+const key = label || (type === 'radio' || type === 'checkbox' ? value : name || selector);
+formMap[key] = {selector: selector + hint, type, value};
+});
+
+const interactives = [];
+document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]').forEach(el => {
+const tag = el.tagName.toLowerCase();
+const text = el.textContent?.trim()?.slice(0, 50) || '';
+const href = el.getAttribute('href') || '';
+const type = el.getAttribute('type') || '';
+const name = el.getAttribute('name') || '';
+const id = el.getAttribute('id') || '';
+const cls = el.getAttribute('class') || '';
+const placeholder = el.getAttribute('placeholder') || '';
+
+let selector = '';
+if (id) selector = '#' + id;
+else if (name) selector = `${tag}[name="${name}"]`;
+else if (cls) selector = `${tag}.${cls.split(' ')[0]}`;
+else selector = tag;
+
+interactives.push({
+selector,
+tag,
+text: text.slice(0, 30),
+href: href.slice(0, 50),
+type,
+placeholder: placeholder.slice(0, 30),
+value: (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : '',
+});
+});
+
+return JSON.stringify({
+url: window.location.href,
+title: document.title,
+text: texts.slice(0, 200).join(' ').slice(0, 4000),
+form: formMap,
+interactives: interactives.slice(0, 60),
+// Phase 3.2 enriched fields
+page_state: hasPendingRequests ? 'spa/dynamic' : 'static',
+cookie_banner: cookieBannerDetected,
+cookie_banner_text: cookieBannerText,
+popup_dialog: popupDialog,
+captcha: captchaDetected,
+login_wall: loginWall,
+shadow_dom_count: shadowDomCount,
+iframes: iframeInfo,
+iframe_count: iframes.length,
+aria_live: ariaLive.slice(0, 5),
+select_options: selectMap,
+images: images.slice(0, 10),
+network_requests: networkRequests,
+});
+}"""
+
+
+
 class BrowserAgent:
     def __init__(
         self,
@@ -567,6 +817,17 @@ class BrowserAgent:
 
         # Action history + undo (Phase 6)
         self.action_history = ActionHistory(self)
+
+        # Phase 9: runtime memory for cross-workflow continuity
+        self.runtime_memory = RuntimeMemory()
+
+        # T202: Vision CAPTCHA handler — AI-powered CAPTCHA solving + dynamic element location
+        self._vision_captcha = VisionCAPTCHAHandler(self)
+        # T205: Proactive visual grid resolver — AI says "click element 3" → click_at(x,y)
+        self._ocr_resolver = OCRResolver(self)
+
+        # MCP non-blocking session store (T106) — enables execute_task / get_session / stop_session
+        self._server_sessions: dict = {}
 
         # T009: workflow recorder (Phase 7)
         from workflow_recorder import WorkflowRecorder
@@ -652,7 +913,7 @@ class BrowserAgent:
             warnings.append(f"ℹ {iframe_count} iframe(s) on page")
         shadow_dom_count = data.get("shadow_dom_count", 0)
         if shadow_dom_count > 0:
-            warnings.append(f"ℹ {shadow_dom_count} shadow DOM element(s)")
+            warnings.append(f"⚠ {shadow_dom_count} shadow DOM element(s) — standard selectors may not reach inside shadow roots")
         login_wall = data.get("login_wall")
         if login_wall and login_wall.get("detected"):
             if login_wall.get("has_skip"):
@@ -676,6 +937,28 @@ class BrowserAgent:
         except Exception:
             pass  # Domain memory is best-effort
 
+        # ── Site override form selectors: inject known selectors for this domain ─
+        try:
+            if self.page and not self.page.is_closed():
+                current_url = self.page.url
+                if current_url:
+                    from urllib.parse import urlparse
+                    domain = urlparse(current_url).netloc
+                    override = get_override_for_url(current_url)
+                    if override:
+                        if override.form_selectors:
+                            selector_lines = ["KNOWN FORM SELECTORS FOR THIS SITE:"]
+                            for name, sel in override.form_selectors.items():
+                                selector_lines.append(f"  {name}: {sel}")
+                            content_parts.append("\n".join(selector_lines))
+                        if override.date_picker_selectors:
+                            dp_lines = ["KNOWN DATE PICKER SELECTORS FOR THIS SITE:"]
+                            for name, sel in override.date_picker_selectors.items():
+                                dp_lines.append(f"  {name}: {sel}")
+                            content_parts.append("\n".join(dp_lines))
+        except Exception:
+            pass  # Site override selectors are best-effort
+
         if warnings:
             content_parts.append("PAGE WARNINGS: " + " | ".join(warnings))
         if form_lines:
@@ -685,7 +968,82 @@ class BrowserAgent:
         content_parts.append(f"\nPage: {data.get('title','unknown')} — {data.get('url','')}")
 
         content = "\n".join(content_parts)
-        messages.append({"role": "user", "content": content[:3000]})
+
+        # ── Vision: attach screenshot if provided ─────────────────────────────
+        # T201: AI now sees the actual page via screenshot. This is critical for
+        # handling dynamic layouts, shadow DOM, visual CAPTCHAs, and overlays.
+        #
+        # IMPORTANT: MiniMax-M2.7 is TEXT-ONLY — does NOT process images.
+        # We use a HYBRID approach:
+        #   - MiniMax-M2.7 for text reasoning (high quality, fast)
+        #   - Ollama VLM (qwen2.5:1.5b) for screenshot analysis
+        # The page screenshot is sent to Ollama VLM which returns a description
+        # of what it sees, and THAT description is prepended to the page content
+        # sent to MiniMax. This gives MiniMax visual context without needing vision.
+        if screenshot_b64:
+            model_lower = (getattr(self, 'model_name', '') or '').lower()
+
+            # ── Option 1: Vision-capable model (GPT-4o, Claude, Ollama VLM) ─────
+            # These models natively support image_url content blocks
+            vision_models_native = (
+                'gpt-4o', 'gpt-4v', 'gpt-4-turbo',   # OpenAI
+                'claude-3', 'claude-3.5', 'claude-opus', 'claude-sonnet',  # Anthropic
+                'qwen2-vl', 'llava', 'moondream',  # Ollama VLMs (native vision)
+            )
+            supports_native_vision = any(m in model_lower for m in vision_models_native)
+
+            if supports_native_vision:
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": content[:3000]},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{screenshot_b64}",
+                                "detail": "high",
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": (
+                                "IMPORTANT — Use the screenshot above to:\n"
+                                "1. Identify buttons, links, forms not in the text above\n"
+                                "2. See visual layouts, overlays, dynamic elements\n"
+                                "3. Detect CAPTCHAs or challenge pages needing image recognition\n"
+                                "4. Find coordinates for click_at(x, y) actions\n"
+                                "5. Handle shadow DOM and dynamic content CSS selectors can't reach\n\n"
+                                "If CSS selectors fail, use click_at(x, y) with coordinates "
+                                "from the screenshot. If an element is invisible to Playwright "
+                                "but visible in the screenshot, use evaluate() JS or click_at."
+                            ),
+                        },
+                    ],
+                })
+            else:
+                # ── Option 2: Text-only model (MiniMax-M2.7) — use hybrid vision ─
+                # The vision description is pre-fetched by _call_ai and passed via
+                # self._vision_desc. Prepend it to the page content so MiniMax
+                # understands what the page looks like.
+                # T205: Also inject indexed grid elements if available
+                grid_elements = getattr(self, '_ocr_elements', []) or []
+                grid_section = ""
+                if grid_elements:
+                    grid_section = "\n\n[CLICKABLE ELEMENT INDEX — use \"click_element N\" action to select by index]:\n"
+                    for el in grid_elements[:12]:  # cap at 12 elements
+                        label = el.get('label', '') or el.get('name', '') or el.get('title', '') or ''
+                        grid_section += f"  [{el['index']}] {label} (at pixel {el['x']},{el['y']})\n"
+
+                vision_desc = getattr(self, '_vision_desc', '') or ''
+                if vision_desc:
+                    enhanced_content = f"[VISUAL DESCRIPTION from screenshot]: {vision_desc}{grid_section}\n\n[Page Content]:\n{content[:3000]}"
+                else:
+                    enhanced_content = content[:3000]
+                messages.append({"role": "user", "content": enhanced_content})
+        else:
+            # No screenshot
+            messages.append({"role": "user", "content": content[:3000]})
+
         return messages
 
     async def _init_browser(self):
@@ -728,149 +1086,130 @@ class BrowserAgent:
 
         forced_engine = os.getenv("BROWSER_ENGINE", "")
 
-        # ── Tier 1: camoufox + Xvfb virtual display ──────────────────────────
-        if not forced_engine or forced_engine == "camoufox-virtual":
+        # Tier engine map: (engine_name, tier_number, setup_function)
+        # Each engine runs in sequence; if forced_engine is set, only that engine + later ones run
+        ENGINE_TIERS = [
+            ("camoufox-virtual", 1, "camoufox-virtual"),
+            ("camoufox", 2, "camoufox"),
+            ("chromium", 3, "chromium"),
+            ("nodriver", 3.5, "nodriver"),
+            ("ucd", 4, "ucd"),
+            ("crawlee", 5, "crawlee"),
+        ]
+
+        last_error = None
+        for engine_name, tier_num, tier_label in ENGINE_TIERS:
+            if forced_engine and forced_engine != engine_name:
+                continue  # Skip tiers that aren't the forced one
             try:
-                from camoufox.async_api import AsyncCamoufox
-                extra_opts = {"block_webrtc": True}
-                if proxy_url:
-                    extra_opts["proxy"] = proxy_url
-                self._camoufox_ctx = AsyncCamoufox(
-                    headless="virtual",
-                    os=profile["os"],
-                    **extra_opts,
-                )
-                self.browser = await self._camoufox_ctx.__aenter__()
-                self._browser_engine = "camoufox-virtual"
-                logger.info("Engine: camoufox/Firefox + Xvfb virtual display (tier 1)")
-            except Exception as e1:
-                logger.warning(f"Tier 1 (camoufox virtual) failed: {e1!r}")
-                self._camoufox_ctx = None
+                logger.info(f"Trying browser tier {tier_num}: {tier_label}...")
+                if tier_num == 1:
+                    from camoufox.async_api import AsyncCamoufox
+                    extra_opts = {"block_webrtc": True}
+                    if proxy_url:
+                        extra_opts["proxy"] = proxy_url
+                    self._camoufox_ctx = AsyncCamoufox(
+                        headless="virtual", os=profile["os"], **extra_opts
+                    )
+                    self.browser = await self._camoufox_ctx.__aenter__()
+                    self._browser_engine = "camoufox-virtual"
+                    logger.info("Engine: camoufox/Firefox + Xvfb virtual display (tier 1)")
 
-                # ── Tier 2: camoufox headless ─────────────────────────────────
-                if not forced_engine or forced_engine == "camoufox":
+                elif tier_num == 2:
+                    from camoufox.async_api import AsyncCamoufox
+                    extra_opts = {"block_webrtc": True}
+                    if proxy_url:
+                        extra_opts["proxy"] = proxy_url
+                    self._camoufox_ctx = AsyncCamoufox(
+                        headless=True, os=profile["os"], **extra_opts
+                    )
+                    self.browser = await self._camoufox_ctx.__aenter__()
+                    self._browser_engine = "camoufox"
+                    logger.info("Engine: camoufox/Firefox headless (tier 2)")
+
+                elif tier_num == 3:
+                    if self.playwright is None:
+                        self.playwright = await async_playwright().start()
+                    chromium_opts = {
+                        "args": STEALTH_ARGS,
+                        "headless": True,
+                        "ignore_default_args": ["--enable-automation"],
+                    }
+                    if proxy_url:
+                        chromium_opts["proxy"] = {"server": proxy_url}
+                    self.browser = await self.playwright.chromium.launch(**chromium_opts)
+                    self._browser_engine = "chromium"
+                    logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
+
+                elif tier_num == 3.5:
+                    bridge = NodriverBridge(headless=True, proxy=proxy_url)
+                    pw, pw_browser, page = await bridge.start()
+                    self._nodriver_bridge = bridge
+                    self.playwright = pw
+                    self.browser = pw_browser
+                    self.page = page
+                    self._browser_engine = "nodriver"
+                    logger.info("Engine: nodriver stealth + Playwright CDP (tier 3.5)")
+                    self._tls_profile_name = "chrome_win" if profile["os"] == "windows" else "chrome_mac"
+                    self._tls_inject = TLSInject(profile_name=self._tls_profile_name)
+                    await self.context.add_init_script(HEADLESS_DETECTION_BYPASS)
+                    tls_headers = self._tls_inject.get_client_hints()
+                    if tls_headers:
+                        await self.page.set_extra_http_headers(tls_headers)
                     try:
-                        extra_opts = {"block_webrtc": True}
-                        if proxy_url:
-                            extra_opts["proxy"] = proxy_url
-                        self._camoufox_ctx = AsyncCamoufox(
-                            headless=True,
-                            os=profile["os"],
-                            **extra_opts,
-                        )
-                        self.browser = await self._camoufox_ctx.__aenter__()
-                        self._browser_engine = "camoufox"
-                        logger.info("Engine: camoufox/Firefox headless (tier 2)")
-                    except Exception as e2:
-                        logger.warning(f"Tier 2 (camoufox headless) failed: {e2!r}")
-                        self._camoufox_ctx = None
+                        await self._tls_inject.apply_via_cdp(self.page)
+                    except Exception as tls_err:
+                        logger.warning(f"[TLS] CDP injection skipped: {tls_err}")
+                    ri = RouteInterceptor(log=logger)
+                    await ri.register(self.page)
+                    return  # nodriver handles its own TLS + context setup
 
-                        # ── Tier 3: Chromium + STEALTH_JS ─────────────────────
-                        if not forced_engine or forced_engine == "chromium":
-                            try:
-                                if self.playwright is None:
-                                    self.playwright = await async_playwright().start()
-                                chromium_opts = {
-                                    "args": STEALTH_ARGS,
-                                    "headless": True,
-                                    "ignore_default_args": ["--enable-automation"],
-                                }
-                                if proxy_url:
-                                    chromium_opts["proxy"] = {"server": proxy_url}
-                                self.browser = await self.playwright.chromium.launch(**chromium_opts)
-                                self._browser_engine = "chromium"
-                                logger.info("Engine: Chromium + STEALTH_JS (tier 3)")
-                            except Exception as e3:
-                                logger.warning(f"Tier 3 (chromium) failed: {e3!r}")
+                elif tier_num == 4:
+                    import undetected_chromedriver as ucd
+                    ucd_opts = {
+                        "headless": True,
+                        "use_auto_implicit_wait": True,
+                        "no_sandbox": True,
+                    }
+                    if proxy_url:
+                        proxy_parts = proxy_url.replace("http://", "").split("@")
+                        ucd_opts["proxy"] = proxy_parts[1] if len(proxy_parts) == 2 else proxy_url
+                    self._ucd_driver = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: ucd.Chrome(**ucd_opts)
+                    )
+                    self._browser_engine = "ucd"
+                    logger.info("Engine: undetected-chromedriver (tier 4)")
 
-                                # ── Tier 3.5: nodriver stealth + Playwright CDP ─────────────
-                                # nodriver patches Chrome at runtime to remove automation signals.
-                                # Playwright connects to it via CDP websocket URL, giving us:
-                                #   nodriver stealth + Playwright API + our TLS/JS spoofing layers.
-                                if not forced_engine or forced_engine == "nodriver":
-                                    try:
-                                        bridge = NodriverBridge(
-                                            headless=True,
-                                            proxy=proxy_url,
-                                        )
-                                        pw, pw_browser, page = await bridge.start()
-                                        # Store on self for cleanup in cleanup_browser()
-                                        self._nodriver_bridge = bridge
-                                        self.playwright = pw
-                                        self.browser = pw_browser   # Playwright browser (connected via CDP)
-                                        self.page = page
-                                        self._browser_engine = "nodriver"
-                                        logger.info("Engine: nodriver stealth + Playwright CDP (tier 3.5)")
-                                        # Jump straight to TLS/profile setup — skip the context/page setup below
-                                        self._tls_profile_name = "chrome_win" if profile["os"] == "windows" else "chrome_mac"
-                                        self._tls_inject = TLSInject(profile_name=self._tls_profile_name)
-                                        # Apply TLS inject + enhanced stealth on nodriver's page
-                                        await self.context.add_init_script(
-                                            HEADLESS_DETECTION_BYPASS
-                                        )
-                                        tls_headers = self._tls_inject.get_client_hints()
-                                        if tls_headers:
-                                            await self.page.set_extra_http_headers(tls_headers)
-                                        try:
-                                            await self._tls_inject.apply_via_cdp(self.page)
-                                        except Exception as tls_err:
-                                            logger.warning(f"[TLS] CDP injection skipped: {tls_err}")
-                                        # Register route interceptor for challenge detection
-                                        ri = RouteInterceptor(log=logger)
-                                        await ri.register(self.page)
-                                        return  # ← skip the context/page setup below
-                                    except Exception as e35:
-                                        logger.warning(f"Tier 3.5 (nodriver) failed: {e35!r}")
+                elif tier_num == 5:
+                    from crawlee.crawlers import PlaywrightCrawler
+                    self._crawlee_crawler = PlaywrightCrawler(
+                        headless=True,
+                        browser_launch_options={"chromium_sandbox": False},
+                    )
+                    self._browser_engine = "crawlee-jsdom"
+                    logger.info("Engine: Crawlee JSDOM (tier 5)")
 
-                                # ── Tier 4: undetected-chromedriver ─────────────
-                                if not forced_engine or forced_engine == "ucd":
-                                    try:
-                                        import undetected_chromedriver as ucd
-                                        ucd_opts = {
-                                            "headless": True,
-                                            "use_auto_implicit_wait": True,
-                                            "no_sandbox": True,
-                                        }
-                                        if proxy_url:
-                                            proxy_parts = proxy_url.replace("http://", "").split("@")
-                                            if len(proxy_parts) == 2:
-                                                ucd_opts["proxy"] = proxy_parts[1]
-                                            else:
-                                                ucd_opts["proxy"] = proxy_url
-                                        ucd_driver = await asyncio.get_event_loop().run_in_executor(
-                                            None,
-                                            lambda: ucd.Chrome(**ucd_opts)
-                                        )
-                                        # Wrap ucd browser in a Playwright-compatible interface
-                                        # ucd exposes .page via driver.window
-                                        self._ucd_driver = ucd_driver
-                                        self._browser_engine = "ucd"
-                                        logger.info("Engine: undetected-chromedriver (tier 4)")
-                                    except Exception as e4:
-                                        logger.warning(f"Tier 4 (ucd) failed: {e4!r}")
+                # Successfully launched
+                break
 
-                                        # ── Tier 5: Crawlee JSDOM ───────────────────
-                                        if not forced_engine or forced_engine == "crawlee":
-                                            try:
-                                                from crawlee.crawlers import PlaywrightCrawler
-                                                crawlee_crawler = PlaywrightCrawler(
-                                                    headless=True,
-                                                    browser_launch_options={"chromium_sandbox": False},
-                                                )
-                                                # Crawlee manages its own browser pool
-                                                self._crawlee_crawler = crawlee_crawler
-                                                self._browser_engine = "crawlee-jsdom"
-                                                logger.info("Engine: Crawlee JSDOM (tier 5)")
-                                            except ImportError:
-                                                logger.warning("Crawlee not installed — install with: pip install crawlee")
-                                                raise
-                                            except Exception as e5:
-                                                logger.warning(f"Tier 5 (crawlee) failed: {e5!r}")
-                                                raise RuntimeError(
-                                                    "All browser tiers failed. "
-                                                    "Install undetected-chromedriver: pip install undetected-chromedriver\n"
-                                                    "Install crawlee: pip install crawlee"
-                                                )
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Tier {tier_num} ({engine_name}) failed: {e!r}")
+                self.browser = None
+                self._camoufox_ctx = None
+                self._nodriver_bridge = None
+                if forced_engine:
+                    # If a specific engine was forced and it failed, stop trying
+                    logger.error(f"Forced engine '{forced_engine}' failed: {e!r}")
+                    break
+                continue
+
+        if self.browser is None:
+            raise RuntimeError(
+                f"All browser tiers exhausted. forced_engine={forced_engine!r}. "
+                f"Last error: {last_error!r}. "
+                "Install playwright browsers: python -m playwright install chromium"
+            )
 
         # ── T023: TLS fingerprint profile selection ──────────────────────────────────
         # Match TLS profile to browser engine for consistency across TLS + HTTP layers
@@ -982,13 +1321,44 @@ class BrowserAgent:
             await self._route_interceptor.register(self.page)
             logger.info("[RouteInt] Registered on first page")
 
-        # Auto-load named session after browser launch (Phase 2)
-        if self.session_name:
-            try:
-                await self.session_manager.load_session(self.session_name)
-                logger.info(f"Session '{self.session_name}' loaded on startup")
-            except Exception as e:
-                logger.warning(f"Failed to load session '{self.session_name}': {e}")
+    def _cleanup(self):
+        """Properly close browser and reset state. Call when done or between tasks."""
+        try:
+            if self._nodriver_bridge:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.call_soon(lambda: asyncio.create_task(self._nodriver_bridge.stop()))
+                    else:
+                        loop.run_until_complete(self._nodriver_bridge.stop())
+                except Exception:
+                    pass
+            if self.browser:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.call_soon(lambda: asyncio.create_task(self.browser.close()))
+                    else:
+                        loop.run_until_complete(self.browser.close())
+                except Exception:
+                    pass
+            if self.context:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.call_soon(lambda: asyncio.create_task(self.context.close()))
+                    else:
+                        loop.run_until_complete(self.context.close())
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self.browser = None
+        self.context = None
+        self.page = None
+        self._camoufox_ctx = None
+        self._nodriver_bridge = None
 
     async def _dismiss_captcha_iframe(self):
         """BUG-02 fix: Detect and auto-dismiss CAPTCHA/delivery iframes.
@@ -1224,263 +1594,29 @@ class BrowserAgent:
         await asyncio.sleep(random.uniform(0.05, 0.15))
 
     async def _get_page_content(self) -> str:
-        """Get rich structured page content for AI — includes SPA detection, selects, iframes, CAPTCHAs."""
+        """Get rich structured page content for AI — includes SPA detection, selects, iframes, CAPTCHAs.
+        
+        Wrapped in a 20s global timeout so complex pages (CSP-blocked, redirect loops,
+        infinitely loading SPAs) don't hang the agent indefinitely.
+        """
         try:
-            # First wait briefly for dynamic content to settle
-            # Use domcontentloaded (fast) + small sleep instead of networkidle
-            # (networkidle waits for ALL network activity — analytics/ads cause it to hang)
             try:
-                await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
+                await self.page.wait_for_load_state('domcontentloaded', timeout=5000)
             except Exception:
                 pass
-            # Brief additional settle time for SPA hydration
             await asyncio.sleep(1.0)
-
-            content = await self.page.evaluate("""() => {
-                const body = document.body;
-                if (!body) return JSON.stringify({error: 'Empty page'});
-
-                // ── SPA / dynamic page detection ──────────────────────────────────
-                const networkRequests = window.performance && window.performance.getEntries
-                    ? window.performance.getEntriesByType('resource').length : -1;
-                const hasMutationObserver = typeof MutationObserver !== 'undefined';
-                const hasPendingRequests = document.readyState !== 'complete';
-
-                // ── Cookie / consent banner detection ─────────────────────────────
-                const cookieBannerSelectors = [
-                    '[aria-label*="cookie" i]', '[class*="cookie" i]', '[id*="cookie" i]',
-                    '[class*="consent" i]', '[id*="consent" i]', '[class*="gdpr" i]',
-                    '[aria-label*="accept" i]', '[aria-label*="allow" i]',
-                ];
-                let cookieBannerDetected = null;
-                let cookieBannerText = null;
-                for (const sel of cookieBannerSelectors) {
-                    const el = document.querySelector(sel);
-                    if (el && window.getComputedStyle(el).display !== 'none') {
-                        cookieBannerDetected = sel;
-                        cookieBannerText = el.textContent ? el.textContent.trim().slice(0, 200) : sel;
-                        break;
-                    }
-                }
-                // ── YouTube GDPR consent page ─────────────────────────────────────
-                if (window.location.hostname === 'consent.youtube.com' ||
-                    document.title === 'Before you continue to YouTube' ||
-                    document.querySelector('[action*="consent"]')) {
-                    const heading = document.querySelector('h1, h2, [aria-label*="continue"]')?.textContent?.trim() || '';
-                    const subtext = document.querySelector('p, [class*="body"]')?.textContent?.trim().slice(0, 200) || '';
-                    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'))
-                        .map(b => b.textContent?.trim() || b.value || '').filter(Boolean).slice(0, 5);
-                    cookieBannerDetected = 'youtube_gdpr';
-                    cookieBannerText = `GDPR_CONSENT: "${heading}" | "${subtext}" | Buttons: ${buttons.join(', ')}`;
-                }
-
-                // ── CAPTCHA / Cloudflare detection ───────────────────────────────
-                let captchaDetected = null;
-                const cfChallenge = document.querySelector('#cf-challenge-center, #challenge-form, .cf-challenge');
-                const hcaptcha = document.querySelector('.h-captcha');
-                const recaptcha = document.querySelector('.g-recaptcha');
-                const genericCaptcha = document.querySelector('[class*="captcha" i], [id*="captcha" i]');
-                if (cfChallenge) captchaDetected = 'cloudflare';
-                else if (hcaptcha) captchaDetected = 'hcaptcha';
-                else if (recaptcha) captchaDetected = 'recaptcha';
-                else if (genericCaptcha) captchaDetected = 'generic';
-
-                // ── Login wall / auth wall detection ────────────────────────────────
-                let loginWall = null;
-                const currentUrl = window.location.href.toLowerCase();
-                const hasEmailField = !!document.querySelector('input[type="email"], input[name*="email"], input[name*="login"], input[placeholder*="email" i]');
-                const hasPasswordField = !!document.querySelector('input[type="password"]');
-                const loginKeywords = ['sign in', 'log in', 'login', 'create account', 'sign up', 'register'];
-                const pageTextLower = (document.body?.textContent || '').toLowerCase().slice(0, 2000);
-                const hasLoginKeyword = loginKeywords.some(kw => pageTextLower.includes(kw));
-                const loginUrls = ['/login', '/signin', '/sign-in', '/auth', '/account/login'];
-                const hasLoginUrl = loginUrls.some(u => currentUrl.includes(u));
-                if ((hasEmailField && hasPasswordField) || (hasLoginUrl && hasLoginKeyword)) {
-                    const skipLinks = Array.from(document.querySelectorAll('a, button')).filter(el => {
-                        const t = (el.textContent || '').toLowerCase();
-                        return ['skip', 'guest', 'browse without', 'continue without', 'later', 'no thanks', 'not now'].some(kw => t.includes(kw));
-                    });
-                    loginWall = {
-                        detected: true,
-                        url: window.location.href,
-                        has_skip: skipLinks.length > 0,
-                        skip_selector: skipLinks[0] ? (skipLinks[0].id ? '#' + skipLinks[0].id : (skipLinks[0].className ? 'a.' + skipLinks[0].className.split(' ')[0] : 'a')) : null
-                    };
-                }
-
-                // ── Shadow DOM elements ──────────────────────────────────────────
-                const shadowHosts = document.querySelectorAll('*');
-                let shadowDomCount = 0;
-                for (const el of shadowHosts) {
-                    if (el.shadowRoot) shadowDomCount++;
-                }
-
-                // ── Modal / popup / overlay dialogs ──────────────────────────────
-                // Detect any visible modal, dialog, overlay, or full-screen popup
-                let popupDialog = null;
-                const modalSelectors = [
-                    '[role="dialog"]', '[role="alertdialog"]', '.modal', '.Modal',
-                    '[class*="modal"]', '[class*="Modal"]', '[class*="overlay"]',
-                    '[class*="Overlay"]', '[class*="popup"]', '[class*="Popup"]',
-                    '[class*="consent"]', '[class*="Consent"]', '[id*="consent"]',
-                    '[id*="Consent"]', '[aria-modal="true"]', '.遮罩', // Chinese "mask"
-                    '.cookies', '.Cookies', '.gdpr', '.GDPR',
-                ];
-                for (const sel of modalSelectors) {
-                    const el = document.querySelector(sel);
-                    if (el) {
-                        const style = window.getComputedStyle(el);
-                        const isVisible = style.display !== 'none' &&
-                                          style.visibility !== 'hidden' &&
-                                          el.offsetWidth > 0 &&
-                                          el.offsetHeight > 0;
-                        if (isVisible) {
-                            const heading = el.querySelector('h1, h2, h3, [aria-label]')?.textContent?.trim().slice(0, 100) || '';
-                            const body = el.textContent?.trim().slice(0, 300) || '';
-                            popupDialog = { selector: sel, heading, body };
-                            break;
-                        }
-                    }
-                }
-                // Also check for full-screen wrappers (YouTube consent style)
-                if (!popupDialog) {
-                    const body = document.body;
-                    if (body && body.offsetWidth > 0 && body.offsetHeight > 0) {
-                        const children = Array.from(body.children);
-                        for (const child of children) {
-                            const style = window.getComputedStyle(child);
-                            if (child.tagName !== 'SCRIPT' && child.tagName !== 'STYLE' &&
-                                style.position === 'fixed' && child.offsetWidth > body.offsetWidth * 0.5) {
-                                popupDialog = {
-                                    selector: child.className ? `.${child.className.split(' ')[0]}` : child.tagName,
-                                    heading: child.querySelector('h1,h2')?.textContent?.trim().slice(0, 100) || '',
-                                    body: child.textContent?.trim().slice(0, 300) || ''
-                                };
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // ── Iframe count ───────────────────────────────────────────────
-                const iframes = document.querySelectorAll('iframe');
-                const iframeInfo = Array.from(iframes).map(f => ({
-                    src: f.src ? f.src.slice(0, 80) : '',
-                    visible: f.offsetWidth > 0 && f.offsetHeight > 0,
-                }));
-
-                // ── ARIA live regions ───────────────────────────────────────────
-                const ariaLive = Array.from(document.querySelectorAll('[aria-live]'))
-                    .map(el => ({ tag: el.tagName.toLowerCase(), text: el.textContent.trim().slice(0, 60), politeness: el.getAttribute('aria-live') }));
-
-                // ── Select options ─────────────────────────────────────────────
-                const selectMap = {};
-                document.querySelectorAll('select').forEach(sel => {
-                    const name = sel.getAttribute('name') || sel.id || sel.className || sel.tagName.toLowerCase();
-                    const options = Array.from(sel.options).map(opt => ({
-                        text: opt.text.trim().slice(0, 60),
-                        value: opt.value,
-                        selected: opt.selected,
-                    }));
-                    selectMap[name] = { selector: (sel.getAttribute('name') ? `select[name="${sel.getAttribute('name')}"]` : sel.id ? `#${sel.id}` : sel.tagName.toLowerCase()), options };
-                });
-
-                // ── Image alt text ─────────────────────────────────────────────
-                const images = Array.from(document.images).slice(0, 20).map(img => ({
-                    alt: img.alt || '',
-                    src: img.src ? img.src.slice(0, 80) : '',
-                    width: img.naturalWidth,
-                }));
-
-                const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-                    acceptNode: (node) => {
-                        const style = window.getComputedStyle(node.parentElement);
-                        return style.display !== 'none' && style.visibility !== 'hidden'
-                            ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-                    }
-                });
-
-                const texts = [];
-                while (walker.nextNode()) {
-                    const t = walker.currentNode.textContent.trim();
-                    if (t) texts.push(t);
-                }
-
-                const formMap = {};
-                document.querySelectorAll('input, select, textarea').forEach(el => {
-                    const name = el.getAttribute('name') || el.id || '';
-                    const type = el.getAttribute('type') || '';
-                    const value = el.getAttribute('value') || '';
-                    let label = '';
-                    const forAttr = el.getAttribute('id');
-                    if (forAttr) {
-                        const lbl = document.querySelector('label[for="' + forAttr + '"]');
-                        if (lbl) label = lbl.textContent.trim();
-                    }
-                    if (!label && name) {
-                        const lbl = document.querySelector('label[for="' + name + '"]');
-                        if (lbl) label = lbl.textContent.trim();
-                    }
-                    const hint = type === 'radio' || type === 'checkbox' ? `[value="${value}"]` : '';
-                    const selector = name ? `${el.tagName.toLowerCase()}[name="${name}"]` : (el.id ? '#' + el.id : el.tagName.toLowerCase());
-                    const key = label || (type === 'radio' || type === 'checkbox' ? value : name || selector);
-                    formMap[key] = {selector: selector + hint, type, value};
-                });
-
-                const interactives = [];
-                document.querySelectorAll('a, button, input, select, textarea, [role="button"], [onclick]').forEach(el => {
-                    const tag = el.tagName.toLowerCase();
-                    const text = el.textContent?.trim()?.slice(0, 50) || '';
-                    const href = el.getAttribute('href') || '';
-                    const type = el.getAttribute('type') || '';
-                    const name = el.getAttribute('name') || '';
-                    const id = el.getAttribute('id') || '';
-                    const cls = el.getAttribute('class') || '';
-                    const placeholder = el.getAttribute('placeholder') || '';
-
-                    let selector = '';
-                    if (id) selector = '#' + id;
-                    else if (name) selector = `${tag}[name="${name}"]`;
-                    else if (cls) selector = `${tag}.${cls.split(' ')[0]}`;
-                    else selector = tag;
-
-                    interactives.push({
-                        selector,
-                        tag,
-                        text: text.slice(0, 30),
-                        href: href.slice(0, 50),
-                        type,
-                        placeholder: placeholder.slice(0, 30),
-                        value: (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? (el.value || '') : '',
-                    });
-                });
-
-                return JSON.stringify({
-                    url: window.location.href,
-                    title: document.title,
-                    text: texts.slice(0, 200).join(' ').slice(0, 4000),
-                    form: formMap,
-                    interactives: interactives.slice(0, 60),
-                    // Phase 3.2 enriched fields
-                    page_state: hasPendingRequests ? 'spa/dynamic' : 'static',
-                    cookie_banner: cookieBannerDetected,
-                    cookie_banner_text: cookieBannerText,
-                    popup_dialog: popupDialog,
-                    captcha: captchaDetected,
-                    login_wall: loginWall,
-                    shadow_dom_count: shadowDomCount,
-                    iframes: iframeInfo,
-                    iframe_count: iframes.length,
-                    aria_live: ariaLive.slice(0, 5),
-                    select_options: selectMap,
-                    images: images.slice(0, 10),
-                    network_requests: networkRequests,
-                });
-            }""")
-            return content
+            try:
+                content = await asyncio.wait_for(
+                    self.page.evaluate(_PAGE_CONTENT_JS),
+                    timeout=10.0
+                )
+                return content
+            except asyncio.TimeoutError:
+                return json.dumps({"error": "evaluate_timeout", "url": str(self.page.url if self.page else "none")})
+            except Exception as e:
+                return json.dumps({"error": str(e), "url": str(self.page.url if self.page else "none")})
         except Exception as e:
-            return json.dumps({"error": str(e), "url": str(self.page.url if self.page else "none")})
-
+            return json.dumps({"error": "outer: " + str(e), "url": str(self.page.url if self.page else "none")})
     def _parse_page_data(self, page_content: str) -> dict:
         """Extract structured observation from page content for frontend"""
         try:
@@ -1503,19 +1639,19 @@ class BrowserAgent:
         text = raw.strip()
         
         # Remove <think thinker>...</think thinker> blocks (MiniMax-M2.7 extended thinking)
-        text = re.sub(r'<think thinker>[\\s\\S]*?</think thinker>', '', text)
+        text = re.sub(r'<think thinker>[\s\S]*?</think thinker>', '', text)
         
         # Also catch <think_> variant
-        text = re.sub(r'<think_>[\\s\\S]*?</think_>', '', text)
+        text = re.sub(r'<think_>[\s\S]*?</think_>', '', text)
         
         # Remove any XML-style thinking blocks
-        text = re.sub(r'<thinking>[\\s\\S]*?</thinking>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<thinking>[\s\S]*?</thinking>', '', text, flags=re.IGNORECASE)
         
         # Remove Unicode-wrapped thinking blocks (⋀...⋉ or similar)
-        text = re.sub(r'⋀[\\s\\S]*?⋉', '', text)
+        text = re.sub(r'⋀[\s\S]*?⋉', '', text)
         
         # Remove <thought> tags
-        text = re.sub(r'<thought>[\\s\\S]*?</thought>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<thought>[\s\S]*?</thought>', '', text, flags=re.IGNORECASE)
         
         # If the response contains ACTION: lines, strip everything before the first one
         # (this removes any leaked reasoning that appears before the actions)
@@ -1565,9 +1701,14 @@ class BrowserAgent:
                 else:
                     text = after_tag
         
-        # Remove common preamble patterns  
+        # Remove common preamble patterns
+        # Two forms: (1) preamble followed by period + space; (2) "preamble: answer" format
         preamble_patterns = [
+            # Form 1: "Based on X." or "I can see Y." — requires trailing period
             r'^(?:Based on|After|From|By|I (?:can see|see|found|noticed|observed|determined)|Looking at|The page (?:shows|displays|contains|has)|Upon (?:examining|reviewing|scrolling))[^.]*\.\s*',
+            # Form 2: "Based on X: answer" or "I can see X: answer" — no period needed
+            r'^(?:Based on|I can see|Looking at|I see|After|From|By|The page|Upon)[^:]*:\s*',
+            # Form 3: "Here is/are X:" or "The following X:"
             r'^(?:Here (?:are|is)|The (?:following|top|first)|These (?:are|were))[^:]*:\s*',
         ]
         for pat in preamble_patterns:
@@ -1589,7 +1730,42 @@ class BrowserAgent:
         
         return text
 
-    async def _call_ai(self, task: str, page_content: str) -> tuple[str, float, str]:
+    async def _describe_screenshot(self, screenshot_b64: str, timeout: float = 15.0) -> str:
+        """
+        Use Ollama VLM (qwen2.5:1.5b) to describe a screenshot for MiniMax-M2.7.
+        MiniMax-M2.7 is text-only and cannot process images, so we use this
+        description as a text proxy for visual context.
+        Returns a brief description of what the page looks like.
+        """
+        if not screenshot_b64:
+            return "(no screenshot)"
+
+        try:
+            from ai_router import call_vision
+            image_uri = f"data:image/jpeg;base64,{screenshot_b64}"
+            prompt = (
+                "You are a web page analyzer. Look at this screenshot and describe:\n"
+                "1. What is visible on the page? (popup, search results, form, error, etc.)\n"
+                "2. Are there any overlays, modals, or popups blocking the content?\n"
+                "3. What elements are in the main area?\n"
+                "Answer in 2-3 sentences maximum. Be specific about what you see.\n"
+                "Example: 'Hotel search results page for Paris. A Genius login popup is "
+                "visible in the center blocking the listings. Hotel cards with prices are "
+                "visible below the fold.'"
+            )
+            desc, _, _ = await asyncio.wait_for(
+                call_vision(image_uri, prompt, "qwen2.5:1.5b"),
+                timeout=timeout
+            )
+            return desc.strip() if desc else "(vision unavailable)"
+        except asyncio.TimeoutError:
+            logger.warning("[Vision] Screenshot description timed out")
+            return "(vision timeout)"
+        except Exception as e:
+            logger.warning(f"[Vision] Screenshot description failed: {e}")
+            return ""  # Return empty so AI ignores vision
+
+    async def _call_ai(self, task: str, page_content: str, screenshot_b64: str = None) -> tuple[str, float, str]:
         """Call AI model to decide next action.
         Returns (ai_response, duration_ms, model_name).
         Retries up to 3 times with exponential backoff on API errors."""
@@ -1601,8 +1777,29 @@ class BrowserAgent:
             logger.warning("No API key available, using fallback AI")
             return self._fallback_ai(task, page_content), (time.monotonic() - start) * 1000, "fallback"
 
-        # Build messages for this call
-        messages = self._build_ai_messages(task, page_content)
+        # ── Hybrid Vision: pre-fetch screenshot description for text-only models ─
+        # MiniMax-M2.7 is text-only — use Ollama VLM to describe the screenshot
+        # so MiniMax gets visual context without needing native vision support.
+        # For native vision models (GPT-4o, Claude), this step is skipped
+        # because they handle image_url content blocks directly.
+        self._vision_desc = ""
+        model_lower = (model_name or '').lower()
+        native_vision_models = ('gpt-4o', 'gpt-4v', 'gpt-4-turbo',
+                               'claude-3', 'claude-3.5', 'claude-opus', 'claude-sonnet',
+                               'qwen2-vl', 'llava', 'moondream')
+        needs_hybrid_vision = screenshot_b64 and not any(m in model_lower for m in native_vision_models)
+        if needs_hybrid_vision:
+            # Fire-and-forget: start fetching vision description in background
+            # We'll await it before building messages
+            try:
+                self._vision_desc = await self._describe_screenshot(screenshot_b64, timeout=12.0)
+                logger.info(f"[Vision] Hybrid vision: {self._vision_desc[:80]}")
+            except Exception as vision_err:
+                logger.warning(f"[Vision] Hybrid vision failed: {vision_err}")
+                self._vision_desc = ""
+
+        # Build messages for this call — include screenshot for vision if available
+        messages = self._build_ai_messages(task, page_content, screenshot_b64=screenshot_b64)
 
         # Use multi-model router
         last_error = None
@@ -1672,9 +1869,16 @@ class BrowserAgent:
                     arg = rest[rest.index("(")+1:-1].strip()
                     actions.append((name, arg))
                 else:
-                    # Bare "done" or "screenshot" etc without parens
+                    # "done", "screenshot", "scroll down" etc without parens
+                    # Only treat as a named action if first word is a known action
+                    KNOWN_ACTIONS = {
+                        "done", "screenshot", "scroll", "click", "type", "wait",
+                        "navigate", "submit", "select", "hover", "dblclick",
+                        "check", "select_option", "switch_to_tab", "get_text",
+                        "evaluate", "refresh", "go_back", "open_tab", "done",
+                    }
                     parts = rest.split(None, 1)
-                    if parts:
+                    if parts and parts[0].lower() in KNOWN_ACTIONS:
                         name = parts[0].lower()
                         arg = parts[1] if len(parts) > 1 else ""
                         actions.append((name, arg))
@@ -1725,6 +1929,32 @@ class BrowserAgent:
                     return True, {"success": True}
             except Exception as js_err:
                 logger.warning(f"JS click fallback failed: {js_err}")
+
+            # ── Vision-guided fallback: use VisionCAPTCHAHandler to locate element ──
+            try:
+                screenshot_b64 = await self._take_screenshot()
+                if screenshot_b64:
+                    try:
+                        # Use the handler's locate_element_vision which properly calls
+                        # MiniMax with a structured vision message and parses JSON response
+                        result = await self._vision_captcha.locate_element_vision(
+                            self.page,
+                            description=f"Element described as: '{arg}'. Find its center pixel.",
+                            screenshot_b64=screenshot_b64,
+                        )
+                        if result and result.get("found") is not False:
+                            x = result.get("x", 0) + (result.get("width", 0) // 2)
+                            y = result.get("y", 0) + (result.get("height", 0) // 2)
+                            if x > 10 and y > 10:
+                                logger.info(f"Vision fallback: clicking at ({x}, {y}) for '{arg}'")
+                                await self._human_move(x, y)
+                                await self.page.mouse.click(x, y)
+                                await self._human_delay(0.3, 0.8)
+                                return True, {"success": True, "vision_fallback": True}
+                    except Exception as vision_err:
+                        logger.warning(f"Vision fallback failed: {vision_err}")
+            except Exception:
+                pass
 
         # ── Type failures: try fill with delay, or evaluate ─────────────────
         if action == "type":
@@ -1837,6 +2067,32 @@ class BrowserAgent:
 
             elif action == "click":
                 await self.action_history.capture_snapshot(action)
+                # ── A06 FIX: Auto-dismiss blocking overlays BEFORE attempting click ──────
+                # Booking.com and many sites show overlays that block the form
+                overlay_selectors = [
+                    "[aria-label='Close']", "[aria-label='close']",
+                    "[data-testid='modal-close']", ".modal-close",
+                    "[data-testid='overlay-close']",
+                    "#onetrust-accept-btn-handler",
+                    "button:has-text('×'), button:has-text('✕')",
+                    "button:has-text('Sign in')", "a:has-text('Sign in')",
+                    "[data-testid='overlay-accept-button']",
+                ]
+                for sel in overlay_selectors:
+                    try:
+                        el = await self.page.query_selector(sel)
+                        if el:
+                            await el.click(timeout=1000)
+                            await self._human_delay(0.15, 0.3)
+                    except Exception:
+                        pass
+                # Also try Escape to close any modal
+                try:
+                    await self.page.keyboard.press("Escape")
+                    await self._human_delay(0.15, 0.3)
+                except Exception:
+                    pass
+                # ── End overlay dismiss ──────────────────────────────────────────────
                 # Move mouse naturally to element before clicking
                 try:
                     el = await self.page.query_selector(arg)
@@ -2094,6 +2350,72 @@ class BrowserAgent:
                 result["success"] = True
                 self.action_history.record_action("submit", {"selector": arg}, "completed", "submitted")
 
+            elif action == "upload":
+                # arg: JSON {"selector": "input[type=file]", "file_path": "/path/to/file.pdf"}
+                import json as _json
+                try:
+                    payload = _json.loads(arg) if arg.strip().startswith("{") else {"selector": arg.split(",")[0], "file_path": arg.split(",")[1] if "," in arg else ""}
+                    sel = payload.get("selector", "")
+                    file_path = payload.get("file_path", "")
+                    if not sel or not file_path:
+                        result["error"] = "upload requires selector and file_path"
+                    else:
+                        el = await self.page.query_selector(sel)
+                        if el:
+                            await el.set_input_files(file_path)
+                            await self._human_delay(0.3, 0.6)
+                            result["success"] = True
+                            result["file"] = file_path
+                        else:
+                            result["error"] = f"No file input found at {sel}"
+                except Exception as e:
+                    result["error"] = f"upload failed: {str(e)[:80]}"
+
+            elif action == "switch_to_frame":
+                # arg: CSS selector or numeric index of iframe/frame
+                try:
+                    idx = int(arg)
+                    frames = self.page.frames
+                    if 0 <= idx < len(frames):
+                        self.page = frames[idx]
+                        result["success"] = True
+                        result["frame"] = idx
+                    else:
+                        result["error"] = f"Frame index {idx} out of range (have {len(frames)} frames)"
+                except ValueError:
+                    # Not an integer — treat as selector
+                    frame_el = await self.page.query_selector(arg)
+                    if frame_el:
+                        try:
+                            frame = await frame_el.content_frame()
+                            if frame:
+                                self.page = frame
+                                result["success"] = True
+                                result["frame"] = frame.url[:80]
+                            else:
+                                result["error"] = f"Element at {arg} is not an iframe"
+                        except Exception:
+                            result["error"] = f"Could not get content frame for {arg}"
+                    else:
+                        result["error"] = f"No iframe found at {arg}"
+
+            elif action == "handle_dialog":
+                # arg: "accept,text" or "dismiss" or just "accept"
+                # Dialogs are auto-accepted by Playwright by default
+                # This action lets AI explicitly dismiss or send text
+                parts = arg.split(",", 1)
+                mode = parts[0].strip().lower()
+                text = parts[1].strip() if len(parts) > 1 else ""
+                # Set up dialog handler for the NEXT dialog only
+                async def dialog_handler(dialog):
+                    if mode == "dismiss":
+                        await dialog.dismiss()
+                    else:
+                        await dialog.accept(text if text else None)
+                self.page.on("dialog", dialog_handler)
+                result["success"] = True
+                result["dialog_mode"] = mode
+
             elif action == "scroll":
                 await self.action_history.capture_snapshot(action)
                 amount = random.randint(300, 700)
@@ -2108,18 +2430,572 @@ class BrowserAgent:
                 await asyncio.sleep(seconds)
                 result["success"] = True
 
-            elif action == "screenshot":
-                result["success"] = True
-                result["screenshot"] = True
+            elif action == "search":
+                # A06 FIX: One-shot search — handles popup dismiss + destination + dates + search
+                # arg: JSON {"destination": "Paris", "checkin": "2026-06-15", "checkout": "2026-06-20", "guests": "2"}
+                import json as _json
+                try:
+                    params = _json.loads(arg) if arg and arg != "" else {}
+                    destination = params.get("destination", "")
+                    checkin   = params.get("checkin", "")
+                    checkout  = params.get("checkout", "")
+                    guests    = params.get("guests", "2")
+
+                    steps_log = []
+
+                    # 1. Dismiss all popups first
+                    popup_selectors = [
+                        "[aria-label='Close']",
+                        "[aria-label='close']",
+                        "[data-testid='modal-close']",
+                        ".modal-close",
+                        "#onetrust-accept-btn-handler",
+                        "button:has-text('Accept')",
+                        "button:has-text('Sign in')",
+                        "a:has-text('Sign in')",
+                        "[data-testid='overlay-accept-button']",
+                        # Google sign-in overlay on Booking.com
+                        "[aria-label='Sign in with Google']",
+                        "div[aria-label*='Google']",
+                    ]
+                    for sel in popup_selectors:
+                        try:
+                            el = await self.page.query_selector(sel)
+                            if el:
+                                await el.click()
+                                await self._human_delay(0.2, 0.4)
+                                steps_log.append(f"dismissed: {sel}")
+                        except Exception:
+                            pass
+                    try:
+                        await self.page.keyboard.press("Escape")
+                        await self._human_delay(0.2, 0.4)
+                    except Exception:
+                        pass
+
+                    # 2. Find destination input — try multiple selectors
+                    dest_found = False
+                    dest_selectors = [
+                        "input[name='ss']",
+                        "input[id='ss']",
+                        "input[placeholder*='Where']",
+                        "input[aria-label*='Where']",
+                        "input[autocomplete*='destination']",
+                        "//div[@class='xp__searchbox']//input",
+                    ]
+                    for sel in dest_selectors:
+                        try:
+                            el = await self.page.query_selector(sel)
+                            if el:
+                                await el.click()
+                                await self._human_delay(0.1, 0.2)
+                                await el.fill(destination)
+                                await self._human_delay(0.3, 0.6)
+                                steps_log.append(f"destination: {sel} = {destination}")
+                                dest_found = True
+                                break
+                        except Exception:
+                            pass
+                    if not dest_found:
+                        steps_log.append("destination: NOT FOUND")
+
+                    # 3. Fill dates — click checkin field then calendar day
+                    if checkin:
+                        # Try to click the check-in date button in the search bar
+                        date_btn_selectors = [
+                            "div[data-testid='searchbox-dates-container'] button:nth-of-type(1)",
+                            "button[data-testid='date-shape-0']",
+                            "div[data-testid='searchbox-dates-container'] button",
+                        ]
+                        for sel in date_btn_selectors:
+                            try:
+                                btn = await self.page.query_selector(sel)
+                                if btn:
+                                    await btn.click()
+                                    await self._human_delay(0.3, 0.5)
+                                    # Now click the actual date cell
+                                    day_found = False
+                                    for day_sel in [f"td[data-date='{checkin}']", f"td[data-date='{checkin}'] button", f"button[data-date='{checkin}']"]:
+                                        try:
+                                            day_btn = await self.page.query_selector(day_sel)
+                                            if day_btn:
+                                                await day_btn.click()
+                                                await self._human_delay(0.2, 0.4)
+                                                steps_log.append(f"checkin: {checkin}")
+                                                day_found = True
+                                                break
+                                        except Exception:
+                                            pass
+                                    if day_found and checkout:
+                                        # Click checkout date
+                                        for day_sel in [f"td[data-date='{checkout}']", f"td[data-date='{checkout}'] button"]:
+                                            try:
+                                                day_btn = await self.page.query_selector(day_sel)
+                                                if day_btn:
+                                                    await day_btn.click()
+                                                    await self._human_delay(0.2, 0.4)
+                                                    steps_log.append(f"checkout: {checkout}")
+                                                    break
+                                            except Exception:
+                                                pass
+                                    break
+                            except Exception:
+                                pass
+
+                    # 4. Guests (optional — click guest field then increment)
+                    if guests:
+                        guest_selectors = [
+                            "div[data-testid='searchbox-guests-dropdown'] button",
+                            "button[data-testid='searchbox-guests-trigger']",
+                            "div[aria-label*='guest'] button",
+                        ]
+                        for sel in guest_selectors:
+                            try:
+                                btn = await self.page.query_selector(sel)
+                                if btn:
+                                    await btn.click()
+                                    await self._human_delay(0.2, 0.4)
+                                    steps_log.append(f"guests opened")
+                                    break
+                            except Exception:
+                                pass
+
+                    # 5. Click Search button
+                    search_found = False
+                    search_selectors = [
+                        "button[type='submit']",
+                        "button[data-testid='searchbox-searchbutton']",
+                        "button:has-text('Search')",
+                        "button:has-text('search')",
+                        "[data-testid='search-button']",
+                    ]
+                    for sel in search_selectors:
+                        try:
+                            btn = await self.page.query_selector(sel)
+                            if btn:
+                                await btn.click()
+                                await self._human_delay(0.5, 1.0)
+                                steps_log.append(f"search clicked: {sel}")
+                                search_found = True
+                                break
+                        except Exception:
+                            pass
+
+                    result["success"] = dest_found and search_found
+                    result["steps_log"] = steps_log
+                    result["destination_filled"] = dest_found
+                    result["search_clicked"] = search_found
+                    self.action_history.record_action("search", params, "completed" if result["success"] else "partial",
+                        f"dest={dest_found}, search={search_found}, steps={len(steps_log)}")
+                except Exception as e:
+                    result["error"] = f"search failed: {str(e)[:100]}"
+                    self.action_history.record_action("search", {"arg": arg[:100]}, "failed", result["error"])
+
+            elif action == "form_fill":
+                # arg: JSON {"fields": [{"selector": "...", "value": "...", "type": "text|date|select"}, ...]}
+                import json as _json
+                try:
+                    # ── A06 FIX: Dismiss common popups/modal overlays BEFORE filling ──────
+                    popup_dismiss_selectors = [
+                        # Booking.com Genius / login popup
+                        "[aria-label='Close'], [aria-label='close']",
+                        "[data-testid='modal-close']",
+                        ".modal-close, .close-button",
+                        # Cookie banners
+                        "#onetrust-accept-btn-handler",
+                        "[id='onetrust-consent-sdk'] button",
+                        "button:has-text('Accept'), button:has-text('Accept all')",
+                        # Generic newsletter/popup dismiss
+                        "button:has-text('×'), button:has-text('✕')",
+                        "button:has-text('No thanks')",
+                        "a:has-text('Sign in'), a:has-text('Log in')",
+                        # Booking.com specific
+                        "[data-testid='overlay-accept-button']",
+                    ]
+                    for sel in popup_dismiss_selectors:
+                        try:
+                            el = await self.page.query_selector(sel)
+                            if el:
+                                await el.click()
+                                await self._human_delay(0.2, 0.4)
+                        except Exception:
+                            pass
+                    # Also try pressing Escape to close modals
+                    try:
+                        await self.page.keyboard.press("Escape")
+                        await self._human_delay(0.2, 0.4)
+                    except Exception:
+                        pass
+                    # ── End popup dismiss ─────────────────────────────────────────────
+
+                    payload = _json.loads(arg)
+                    fields = payload.get("fields", [])
+                    results_by_field = []
+                    all_ok = True
+                    for field in fields:
+                        sel = field.get("selector", "")
+                        value = field.get("value", "")
+                        ftype = field.get("type", "text")
+                        if not sel or not value:
+                            continue
+                        try:
+                            if ftype == "date":
+                                ok = await self._handle_date_picker(sel, value)
+                            elif ftype == "select" or ftype == "text":
+                                # Auto-detect <select> elements even when AI sends type="text"
+                                el = await self.page.query_selector(sel)
+                                if el:
+                                    tag = (await el.evaluate("el => el.tagName")).lower()
+                                    if tag == "select":
+                                        try:
+                                            await el.select_option(label=value)
+                                            await self._human_delay(0.1, 0.3)
+                                            ok = True
+                                        except Exception:
+                                            # Try matching by value attribute
+                                            try:
+                                                await el.select_option(value=value)
+                                                ok = True
+                                            except Exception:
+                                                ok = False
+                                    else:
+                                        # Regular text input
+                                        await self._human_type(sel, value)
+                                        await self._human_delay(0.15, 0.4)
+                                        ok = True
+                                else:
+                                    ok = False
+                            elif ftype == "file":
+                                # File upload: set input[type="file"] paths
+                                el = await self.page.query_selector(sel)
+                                if el:
+                                    await el.set_input_files(value)
+                                    await self._human_delay(0.2, 0.5)
+                                    ok = True
+                                else:
+                                    ok = False
+                            else:
+                                # text field
+                                await self._human_type(sel, value)
+                                await self._human_delay(0.15, 0.4)
+                                ok = True
+                            results_by_field.append({"selector": sel, "value": value, "type": ftype, "ok": ok})
+                            if not ok:
+                                all_ok = False
+                        except Exception as fe:
+                            results_by_field.append({"selector": sel, "value": value, "type": ftype, "ok": False, "error": str(fe)[:80]})
+                            all_ok = False
+                    result["success"] = all_ok
+                    result["fields"] = results_by_field
+                    # Auto-click Submit button if form was filled
+                    try:
+                        submit_selectors = [
+                            "button[type=submit]",
+                            "input[type=submit]",
+                            "button:has-text('Submit')",
+                            "button:has-text('submit')",
+                            "a:has-text('Submit')",
+                            "[data-testid='submit']",
+                        ]
+                        for s in submit_selectors:
+                            el = await self.page.query_selector(s)
+                            if el:
+                                await asyncio.sleep(0.3)
+                                await el.click()
+                                await self._human_delay(0.3, 0.6)
+                                result["submitted"] = True
+                                break
+                    except Exception as se:
+                        result["submit_error"] = str(se)[:80]
+                    self.action_history.record_action("form_fill", {"field_count": len(fields)}, "completed" if all_ok else "partial", f"{sum(f.get('ok',False) for f in results_by_field)}/{len(results_by_field)} fields filled")
+                except Exception as e:
+                    result["error"] = f"form_fill failed: {str(e)[:100]}"
+                    self.action_history.record_action("form_fill", {"arg": arg[:100]}, "failed", result["error"])
+
+            elif action == "click_at":
+                # T203: Coordinate-based click using _human_move bezier path
+                # arg format: "x, y" (e.g., "450, 320")
+                # Used when CSS selectors fail but AI can see element in screenshot
+                try:
+                    parts = arg.split(",")
+                    if len(parts) == 2:
+                        x = int(parts[0].strip())
+                        y = int(parts[1].strip())
+                        await self._human_move(x, y)
+                        await asyncio.sleep(0.1)
+                        await self.page.mouse.click(x, y)
+                        await self._human_delay(0.3, 0.6)
+                        result["success"] = True
+                        result["clicked_at"] = (x, y)
+                        self.action_history.record_action("click_at", {"x": x, "y": y}, "completed")
+                    else:
+                        result["error"] = "click_at requires x,y format: 'x, y'"
+                        result["success"] = False
+                except Exception as e:
+                    result["error"] = f"click_at failed: {str(e)[:80]}"
+                    result["success"] = False
+
+            elif action == "click_element":
+                # T205: Resolve "click_element N" → click_at(x, y) using grid index
+                # arg format: "N" (e.g., "3" = click element with index 3)
+                try:
+                    idx = int(arg.strip())
+                    grid_elements = getattr(self, '_ocr_elements', []) or []
+                    coords = self._ocr_resolver.index_to_coordinates(grid_elements, idx)
+                    if coords:
+                        x, y = coords
+                        logger.info(f"[OCRResolver] click_element {idx} → clicking at ({x}, {y})")
+                        await self._human_move(x, y)
+                        await asyncio.sleep(0.1)
+                        await self.page.mouse.click(x, y)
+                        await asyncio.sleep(0.3)
+                        result["success"] = True
+                        result["clicked_element"] = idx
+                        result["clicked_at"] = (x, y)
+                        self.action_history.record_action("click_element", {"index": idx, "x": x, "y": y}, "completed")
+                    else:
+                        # Fallback: try vision-based location
+                        screenshot = await self._take_screenshot()
+                        if screenshot:
+                            elements = await self._ocr_resolver.resolve_task(
+                                getattr(self, '_current_task', 'click element'), screenshot
+                            )
+                            coords = self._ocr_resolver.index_to_coordinates(elements, idx)
+                            if coords:
+                                x, y = coords
+                                await self._human_move(x, y)
+                                await asyncio.sleep(0.1)
+                                await self.page.mouse.click(x, y)
+                                await asyncio.sleep(0.3)
+                                result["success"] = True
+                                result["clicked_element"] = idx
+                                result["clicked_at"] = (x, y)
+                                self.action_history.record_action("click_element", {"index": idx, "x": x, "y": y}, "completed")
+                            else:
+                                result["error"] = f"click_element {idx}: index not found in grid ({len(grid_elements)} elements indexed)"
+                                result["success"] = False
+                        else:
+                            result["error"] = f"click_element {idx}: no grid data available"
+                            result["success"] = False
+                except ValueError:
+                    result["error"] = f"click_element requires a number, got: '{arg}'"
+                    result["success"] = False
+                except Exception as e:
+                    result["error"] = f"click_element failed: {str(e)[:80]}"
+                    result["success"] = False
 
             elif action == "done":
                 result["success"] = True
                 result["answer"] = arg
 
+            elif action == "wait_for_navigation":
+                # arg: timeout_ms (optional, default 15000)
+                timeout_ms = 15000
+                if arg.strip().isdigit():
+                    timeout_ms = int(arg.strip())
+                try:
+                    await self.page.wait_for_load_state("domcontentloaded", timeout=timeout_ms/1000)
+                    await asyncio.sleep(0.5)
+                    result["success"] = True
+                    result["url"] = self.page.url
+                except Exception as e:
+                    result["error"] = f"wait_for_navigation: {str(e)[:80]}"
+                    result["success"] = False
+
+            elif action == "book":
+                # A02: Attempt to complete a booking/purchase
+                # arg: JSON {"test_card": true} or {} — uses Stripe test card if test_card=true
+                # The AI should first navigate to payment page, then call book.
+                # This action: fills Stripe test card (4242424242424242) + clicks Pay/Book
+                import json as _json
+                test_mode = False
+                try:
+                    if arg.strip().startswith("{"):
+                        payload = _json.loads(arg)
+                        test_mode = payload.get("test_card", False)
+                except Exception:
+                    pass
+                try:
+                    # Try Stripe card fields (number, expiry, CVC, name)
+                    stripe_fields = [
+                        (" card number", "4242424242424242"),
+                        (" expiry", "12/28"),
+                        (" cvc", "123"),
+                        (" name on card", "Test User"),
+                    ]
+                    filled = 0
+                    for label_contains, val in stripe_fields:
+                        # Find by placeholder or label text containing label_contains
+                        inputs = await self.page.query_selector_all("input")
+                        for inp in inputs:
+                            ph = ((await inp.get_attribute("placeholder")) or "").lower()
+                            aria = ((await inp.get_attribute("aria-label")) or "").lower()
+                            name = ((await inp.get_attribute("name")) or "").lower()
+                            if label_contains.lower() in ph or label_contains.lower() in aria or label_contains.lower() in name:
+                                await inp.fill(val)
+                                await self._human_delay(0.2, 0.4)
+                                filled += 1
+                                break
+                    result["fields_filled"] = filled
+                    # Click Pay / Book / Purchase button
+                    book_btns = [
+                        "button[type=submit]", "button:has-text('Pay')",
+                        "button:has-text('Book')", "button:has-text('Pay now')",
+                        "button:has-text('Complete booking')",
+                        "button:has-text('Reserve')",
+                        "[data-testid='pay-button']",
+                    ]
+                    for sel in book_btns:
+                        btn = await self.page.query_selector(sel)
+                        if btn:
+                            await btn.click()
+                            await self._human_delay(1.0, 2.0)
+                            result["book_clicked"] = sel
+                            break
+                    result["success"] = True
+                    result["test_mode"] = test_mode
+                    result["confirmation_url"] = self.page.url
+                except Exception as e:
+                    result["error"] = f"book action failed: {str(e)[:80]}"
+                    result["success"] = False
+
+            else:
+                # A01f FIX: Explicit error for unknown actions instead of silent fail
+                result["success"] = False
+                result["error"] = f"Unknown action '{action}'. Valid actions: navigate, click, type, check, select, select_option, hover, dblclick, switch_to_tab, open_tab, close_tab, get_text, evaluate, submit, scroll, wait, form_fill, upload, switch_to_frame, handle_dialog, done"
+
         except Exception as e:
             result["error"] = str(e)[:200]
 
         return result
+
+    async def _handle_date_picker(self, field_selector: str, date_value: str) -> bool:
+        """Click a date field, wait for calendar, select matching date."""
+        try:
+            # Click the field to open calendar
+            await self.page.click(field_selector, timeout=5000)
+            await asyncio.sleep(0.5)
+
+            # Parse date — accept "2026-06-15" or "Jun 15, 2026"
+            import datetime as _dt
+            try:
+                parsed = _dt.datetime.strptime(date_value, "%Y-%m-%d")
+            except ValueError:
+                try:
+                    parsed = _dt.datetime.strptime(date_value, "%b %d, %Y")
+                except ValueError:
+                    parsed = _dt.datetime.strptime(date_value, "%B %d, %Y")
+
+            year = str(parsed.year)
+            month = parsed.strftime("%B")  # "June"
+            day = str(parsed.day)
+
+            # Try multiple calendar selection strategies
+            for strategy in [
+                # Strategy 1: Click day number directly in calendar
+                lambda: self.page.click(f"td[data-date='{date_value}']", timeout=2000),
+                # Strategy 2: aria-label on day button
+                lambda: self.page.click(f"button[aria-label*='{month} {day}'], button[aria-label*='{parsed.strftime('%b %d')}']", timeout=2000),
+                # Strategy 3: text match in calendar cells
+                lambda: self._click_date_in_calendar(month, day, year),
+            ]:
+                try:
+                    await strategy()
+                    await asyncio.sleep(0.3)
+                    return True
+                except Exception:
+                    pass
+            return False
+        except Exception as e:
+            logger.warning(f"Date picker failed for {field_selector} = {date_value}: {e}")
+            return False
+
+    async def _click_date_in_calendar(self, month: str, day: str, year: str) -> bool:
+        """Click a specific day in an open calendar widget by finding visible day buttons.
+        
+        Works inside shadow DOM (via shadowRoot.querySelectorAll) and across
+        booking.com, airbnb, and standard calendar widgets.
+        """
+        month_lower = month.lower()
+        day_str = day.lstrip("0")  # "07" → "7" for matching
+        month_abbr = month[:3].lower()  # "June" → "jun"
+        
+        # Detect shadow roots on the page and search inside them too
+        script = f"""
+        (function() {{
+            const monthLower = '{month_lower}';
+            const yearStr = '{year}';
+            const dayStr = '{day_str}';
+            const monthAbbr = '{month_abbr}';
+            
+            // Collect all candidate elements from document and shadow roots
+            function queryDeep(selector) {{
+                const results = [];
+                // Main document
+                document.querySelectorAll(selector).forEach(el => results.push(el));
+                // Inside shadow roots
+                document.querySelectorAll('*').forEach(el => {{
+                    try {{
+                        if (el.shadowRoot) {{
+                            el.shadowRoot.querySelectorAll(selector).forEach(s => results.push(s));
+                        }}
+                    }} catch(e) {{}}
+                }});
+                return results;
+            }};
+            
+            // Try td[data-date='YYYY-MM-DD'] — booking.com format
+            const cells1 = queryDeep('td[data-date]');
+            for (const cell of cells1) {{
+                const d = cell.getAttribute('data-date') || '';
+                // booking.com uses "2026-07-15" format
+                if (d.includes('{year}') && (d.endsWith('-0' + day_str) || d.endsWith('-' + day_str))) {{
+                    cell.click();
+                    return 'found_data_date:' + d;
+                }}
+            }}
+            
+            // Try td[role=gridcell] with aria-label
+            const cells2 = queryDeep('td[role="gridcell"]');
+            for (const cell of cells2) {{
+                const label = (cell.getAttribute('aria-label') || '').toLowerCase();
+                const text = (cell.textContent || '').trim();
+                const disabled = cell.getAttribute('aria-disabled') || '';
+                if ((text === dayStr || label.includes(dayStr) || label.includes(monthAbbr + ' ' + dayStr)) 
+                    && !disabled.includes('true')) {{
+                    cell.click();
+                    return 'found_gridcell:' + label;
+                }}
+            }}
+            
+            // Try button[aria-label] — airbnb calendar
+            const btns = queryDeep('button[aria-label]');
+            for (const btn of btns) {{
+                const label = (btn.getAttribute('aria-label') || '').toLowerCase();
+                if (label.includes(monthLower) && label.includes(dayStr)) {{
+                    btn.click();
+                    return 'found_button:' + label;
+                }}
+            }}
+            
+            // Last resort: any visible button/spAN containing the day number
+            const allCells = queryDeep('td, button, span');
+            for (const el of allCells) {{
+                const text = (el.textContent || '').trim();
+                const disabled = el.getAttribute('aria-disabled') || 'false';
+                const role = el.getAttribute('role') || '';
+                if (text === dayStr && text.match(/^\d+$/) !== null
+                    && disabled !== 'true' && role !== 'gridcell') {{
+                    el.click();
+                    return 'found_text:' + text;
+                }}
+            }}
+            
+            return null;
+        }})();
+        """
+        result = await self.page.evaluate(script)
+        return bool(result)
 
     async def undo_last_action(self) -> dict:
         """Public method: undo the last undoable browser action."""
@@ -2132,7 +3008,7 @@ class BrowserAgent:
                 # Use JPEG for compression (10x smaller than PNG), cap to ~200KB base64
                 ss = await asyncio.wait_for(
                     self.page.screenshot(type="jpeg", quality=70, full_page=False,
-                                         timeout=10.0),
+                                         timeout=10000),
                     timeout=12.0
                 )
                 b64 = base64.b64encode(ss).decode()
@@ -2148,8 +3024,10 @@ class BrowserAgent:
                     b64 = base64.b64encode(buf.getvalue()).decode()
                 return b64
             except asyncio.TimeoutError:
+                logger.warning("[Screenshot] Timeout taking screenshot")
                 return ""
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[Screenshot] Failed: {type(e).__name__}: {e}")
                 return ""
         return ""
 
@@ -2157,15 +3035,24 @@ class BrowserAgent:
         """Stream step-by-step execution via WebSocket — FULL rich step data"""
         await self._init_browser()
 
+        # Normalize URL: ensure it has a scheme
+        if "://" not in url:
+            url = f"https://{url}"
+
         steps_executed = 0
 
         # Mode-based step limits
-        mode_limits = {"fast": 12, "standard": 20, "deep": 30}
-        max_steps = mode_limits.get(mode.lower(), mode_limits.get("fast", 15))
+        # Mode-based step limits — frontend sends: fast|stealth|deep
+        # stealth → standard (20 steps), deep stays deep (30), fast (12)
+        _MODE_MAP = {"fast": 12, "stealth": 20, "standard": 20, "deep": 30}
+        max_steps = _MODE_MAP.get(mode.lower(), 15)
         max_total_actions = max_steps * 4  # Hard cap on total actions (each step can have multiple batched actions)
 
         # Navigate to start
         nav_start = time.monotonic()
+        # Normalize URL right before use
+        if not url.startswith("http"):
+            url = f"https://{url}"
         try:
             # Try primary navigation strategy
             try:
@@ -2173,16 +3060,50 @@ class BrowserAgent:
             except Exception as nav_err:
                 # Retry with more relaxed waiting
                 logger.warning(f"Primary nav failed ({nav_err}), retrying with load strategy")
-                await self.page.goto(url, wait_until="load", timeout=45000)
+                await self.page.goto(url, wait_until="load", timeout=15000)
+            # Give SPA/rendering time to complete before parsing page content
+            await asyncio.sleep(4)
             # BUG-02 fix: dismiss any CAPTCHA iframes after initial navigation
             captcha_domain = await self._dismiss_captcha_iframe()
             if captcha_domain:
                 logger.info(f"CAPTCHA iframe detected after navigation — dismissed {captcha_domain}")
-                # T010: attempt solve
                 try:
                     await self._handle_captcha_iframe()
                 except Exception:
                     pass
+
+            # Auto-dismiss Booking.com Genius popup if present using JS removal (more reliable than CSS selectors)
+            try:
+                removed = await self.page.evaluate("""
+                    () => {
+                        const selectors = [
+                            // Booking.com Genius/login popups
+                            '.bui-modal', '[role="dialog"]', '.bui-overlay',
+                            '[aria-label="Dismiss sign-in info"]',
+                            '.bui-ticket__sidebar',
+                            // Generic overlays
+                            '.overlay', '.modal-backdrop', '[data-testid="overlay"]',
+                            // Booking.com sign-in variants
+                            '[aria-label*="sign in" i]', '[aria-label*="Sign in" i]',
+                            'button[aria-label*="sign in" i]',
+                            // Google sign-in popup elements
+                            '[aria-label="Close sign-in"]',
+                            'iframe[src*="googles"] ~ *',
+                        ];
+                        let count = 0;
+                        for (const sel of selectors) {
+                            try {
+                                document.querySelectorAll(sel).forEach(el => { el.remove(); count++; });
+                            } catch(e) {}
+                        }
+                        return count;
+                    }
+                """)
+                if removed > 0:
+                    logger.info(f"Dismissed {removed} popup/overlay element(s) via JS")
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"Popup auto-dismiss JS failed: {e}")
             captcha_wait_count = 0   # BUG-05 fix: track consecutive wait()s for CAPTCHA loops
             consecutive_failures = 0  # Track consecutive step failures — bail after 3
             steps_executed += 1
@@ -2215,6 +3136,55 @@ class BrowserAgent:
             page_data = self._parse_page_data(page_content)
             page_title_val = await self.page.title() if self.page else ""
             page_url = page_data.get("url", "")
+
+            # Sign-in wall guard: Booking.com redirects to signin/account pages
+            # Only abort if the task was SEARCHING (hotel search needs account).
+            # If the task is ABOUT signing up, the account page IS the target.
+            task_lower = task.lower()
+            is_signup_task = any(k in task_lower for k in [
+                "sign up", "signup", "create account", "register", "sign-in",
+                "account creation", "new account", "join"
+            ])
+            if not is_signup_task and any(bad in page_url for bad in ("signin.booking.com", "account.booking.com", "/sign-in", "/signin")):
+                yield {
+                    "step": step_num, "action": "done",
+                    "argument": "signin wall",
+                    "status": "completed",
+                    "url": page_url,
+                    "page_title": page_title_val,
+                    "model": getattr(self, 'model_name', 'unknown'), "engine": self._browser_engine,
+                    "duration_ms": 0,
+                    "ai_reasoning": "Booking.com redirected to sign-in wall. Cannot search without account.",
+                    "observation": "Sign-in wall detected — Booking.com requires account for hotel search.",
+                    "screenshot": await self._take_screenshot(),
+                    "answer": "Booking.com requires sign-in. Cannot complete hotel search without account.",
+                }
+                return
+
+            # Stuck loop guard: if same URL repeated 3x without progress, bail
+            if not hasattr(self, "_prev_page_urls"):
+                self._prev_page_urls = []
+            self._prev_page_urls.append(page_url)
+            if len(self._prev_page_urls) > 6:
+                self._prev_page_urls.pop(0)
+            if len(self._prev_page_urls) >= 3:
+                recent = self._prev_page_urls[-3:]
+                if len(set(recent)) == 1 and recent[0]:
+                    # Same URL 3x in a row — stuck in a loop
+                    yield {
+                        "step": step_num, "action": "done",
+                        "argument": "stuck in loop",
+                        "status": "completed",
+                        "url": page_url,
+                        "page_title": page_title_val,
+                        "model": getattr(self, 'model_name', 'unknown'), "engine": self._browser_engine,
+                        "duration_ms": 0,
+                        "ai_reasoning": f"Same URL repeated 3 times without progress: {page_url}",
+                        "observation": "Agent is stuck in a loop — same URL with no action progress.",
+                        "screenshot": await self._take_screenshot(),
+                        "answer": f"Agent stuck in loop at {page_url}. Tried {steps_executed} actions without progress.",
+                    }
+                    return
 
             # T044: Challenge detection — route interceptor + AI screenshot analysis
             # If a challenge is detected mid-session, run the 8-tier escalation engine
@@ -2280,7 +3250,7 @@ class BrowserAgent:
                         "status": "completed",
                         "url": page_url,
                         "page_title": page_title_val,
-                        "model": model_name,
+                        "model": getattr(self, "model_name", "MiniMax-M2.7"),
                         "engine": self._browser_engine,
                         "duration_ms": 0,
                         "ai_reasoning": f"All {self._escalation_max_tries} escalation tiers exhausted. This site blocks all known browser automation approaches.",
@@ -2362,7 +3332,7 @@ class BrowserAgent:
                         "status": "completed",
                         "url": page_url,
                         "page_title": page_title_val,
-                        "model": model_name,
+                        "model": getattr(self, "model_name", "MiniMax-M2.7"),
                         "engine": self._browser_engine,
                         "duration_ms": 0,
                         "ai_reasoning": escalation_result["reason"],
@@ -2398,8 +3368,35 @@ class BrowserAgent:
                 observation_parts.append(f"Title: {page_title_val}")
             observation = " | ".join(observation_parts) or f"Page at {page_url}"
 
-            # Call AI
-            ai_response, ai_ms, model_name = await self._call_ai(task, page_content)
+            # T201: Take screenshot BEFORE calling AI — agent now sees the page visually
+            # T202: Try VisionCAPTCHAHandler first for any CAPTCHA detected
+            screenshot_b64 = await self._take_screenshot()
+            self._ocr_elements = []  # reset grid index
+
+            if screenshot_b64:
+                # Vision-powered CAPTCHA detection + solving (before escalation engine)
+                try:
+                    captcha_solved = await self._vision_captcha.solve_if_captcha_present(self.page)
+                    if captcha_solved:
+                        logger.info("[VisionCAPTCHA] CAPTCHA solved by vision handler, retrying step...")
+                        await asyncio.sleep(1.5)
+                        # Challenge resolved — take fresh screenshot and continue to AI call
+                        screenshot_b64 = await self._take_screenshot()
+                except Exception as vc_err:
+                    logger.warning(f"[VisionCAPTCHA] Handler error: {vc_err}")
+
+                # T205: Proactively index visual grid elements BEFORE AI makes decisions.
+                # This lets AI say "click hotel card 3" and we translate index→pixel coords.
+                try:
+                    grid_elements = await self._ocr_resolver.resolve_task(task, screenshot_b64)
+                    if grid_elements:
+                        self._ocr_elements = grid_elements
+                        logger.info(f"[OCRResolver] Indexed {len(grid_elements)} elements for AI to reference")
+                except Exception as gr_err:
+                    logger.warning(f"[OCRResolver] Grid indexing error: {gr_err}")
+
+            # Call AI — now WITH screenshot for vision
+            ai_response, ai_ms, model_name = await self._call_ai(task, page_content, screenshot_b64=screenshot_b64)
 
             # If API failed after all retries, surface error and stop
             if model_name == "error":
@@ -2431,7 +3428,7 @@ class BrowserAgent:
                 "status": "thinking",
                 "url": page_url,
                 "page_title": page_title_val,
-                "model": model_name, "engine": self._browser_engine,
+                "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                 "duration_ms": int(ai_ms),
                 "ai_reasoning": ai_response,
                 "observation": observation,
@@ -2455,7 +3452,7 @@ class BrowserAgent:
                         "status": "completed",
                         "url": self.page.url if self.page else page_url,
                         "page_title": await self.page.title() if self.page else page_title_val,
-                        "duration_ms": 0, "model": model_name, "engine": self._browser_engine,
+                        "duration_ms": 0, "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                         "observation": f"Action limit reached after {steps_executed} total actions.",
                         "screenshot": await self._take_screenshot(),
                         "answer": f"Task incomplete — reached action limit ({max_total_actions}). The page was too complex for the allowed steps.",
@@ -2537,7 +3534,7 @@ class BrowserAgent:
                                 "url": self.page.url if self.page else page_url,
                                 "page_title": await self.page.title() if self.page else page_title_val,
                                 "duration_ms": exec_ms,
-                                "model": model_name, "engine": self._browser_engine,
+                                "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                                 "ai_reasoning": f"CAPTCHA loop detected: {captcha_wait_count} consecutive wait() calls with no page progress. Giving up with a clear message.",
                                 "observation": f"CAPTCHA blocker detected after {captcha_wait_count} wait attempts.",
                                 "screenshot": await self._take_screenshot(),
@@ -2568,6 +3565,27 @@ class BrowserAgent:
                         except Exception:
                             pass  # Domain memory is best-effort
 
+                        # ── T114: Scroll-before-done — ensure full page content is loaded ─
+                        # Many sites lazy-load results (hotels, jobs, products). AI may call
+                        # done() after only the first page renders. Scroll to bottom + back up
+                        # so all results are loaded before we report completion.
+                        scroll_observations = []
+                        for _ in range(3):
+                            try:
+                                await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                                await asyncio.sleep(0.8)
+                                new_text = await self.page.evaluate("document.body.innerText")
+                                scroll_observations.append(len(new_text))
+                                if len(scroll_observations) >= 2 and scroll_observations[-1] == scroll_observations[-2]:
+                                    break  # No more content loaded
+                            except Exception:
+                                break
+                        try:
+                            await self.page.evaluate("window.scrollTo(0, 0)")
+                            await asyncio.sleep(0.3)
+                        except Exception:
+                            pass
+
                         yield {
                             "step": step_num,
                             "action": "done",
@@ -2576,7 +3594,7 @@ class BrowserAgent:
                             "url": self.page.url if self.page else page_url,
                             "page_title": await self.page.title() if self.page else page_title_val,
                             "duration_ms": exec_ms,
-                            "model": model_name, "engine": self._browser_engine,
+                            "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                             "ai_reasoning": ai_response,
                             "observation": observation,
                             "screenshot": await self._take_screenshot(),
@@ -2596,7 +3614,7 @@ class BrowserAgent:
                         "url": self.page.url if self.page else page_url,
                         "page_title": await self.page.title() if self.page else page_title_val,
                         "duration_ms": exec_ms,
-                        "model": model_name, "engine": self._browser_engine,
+                        "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                         "ai_reasoning": ai_response,
                         "observation": observation,
                         "screenshot": screenshot,
@@ -2628,7 +3646,7 @@ class BrowserAgent:
                                 "url": self.page.url if self.page else page_url,
                                 "page_title": await self.page.title() if self.page else page_title_val,
                                 "duration_ms": exec_ms,
-                                "model": model_name, "engine": self._browser_engine,
+                                "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                                 "observation": f"Bailed after {consecutive_failures} consecutive failures.",
                                 "screenshot": await self._take_screenshot(),
                                 "answer": f"Could not complete task — {consecutive_failures} consecutive action failures. The site may have bot protection or complex interactive elements.",
@@ -2642,7 +3660,7 @@ class BrowserAgent:
                             "url": page_url,
                             "page_title": page_title_val,
                             "duration_ms": exec_ms,
-                            "model": model_name, "engine": self._browser_engine,
+                            "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
                             "ai_reasoning": ai_response,
                             "observation": observation,
                             "screenshot": await self._take_screenshot(),
@@ -2664,7 +3682,7 @@ class BrowserAgent:
             "url": self.page.url if self.page else "",
             "page_title": await self.page.title() if self.page else "",
             "duration_ms": 0,
-            "model": model_name, "engine": self._browser_engine,
+            "model": getattr(self, "model_name", "MiniMax-M2.7"), "engine": self._browser_engine,
             "screenshot": await self._take_screenshot(),
         }
 
@@ -2750,6 +3768,14 @@ class BrowserAgent:
 
         logger.info("[Escalation] Restarting browser with fresh identity...")
 
+        # Save current URL before closing — CRITICAL for re-navigation after restart
+        target_url = None
+        if self.page and not self.page.is_closed():
+            try:
+                target_url = self.page.url
+            except Exception:
+                pass
+
         # Save cookies before closing
         saved_cookies = []
         if self.context:
@@ -2799,6 +3825,11 @@ class BrowserAgent:
                 ri = RouteInterceptor(log=logger)
                 await ri.register(self.page)
                 self._route_interceptor = ri
+            # BUG-27 FIX: Re-navigate to target URL after restart
+            if target_url and self.page:
+                logger.info(f"[Escalation] Re-navigating to: {target_url}")
+                await self.page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+                await asyncio.sleep(2)
             return True
         except Exception as e:
             logger.error(f"[Escalation] Browser restart failed: {e}")
@@ -2811,8 +3842,9 @@ class BrowserAgent:
         """
         logger.info(f"[Escalation] Switching to {target_engine}...")
 
-        # Save cookies
+        # Save cookies and target URL BEFORE closing so we can re-navigate after restart
         saved_cookies = []
+        saved_target = self.page.url if self.page else target_url
         if self.context:
             try:
                 saved_cookies = await self.context.cookies()
@@ -2849,6 +3881,11 @@ class BrowserAgent:
                     await self.context.add_cookies(saved_cookies)
                 except Exception:
                     pass
+            # A01a FIX: Re-navigate to target URL after engine switch (page is at about:blank)
+            if saved_target and self.page:
+                logger.info(f"[Escalation] Re-navigating to: {saved_target}")
+                await self.page.goto(saved_target, wait_until="domcontentloaded", timeout=20000)
+                await asyncio.sleep(2)
             return True
         except Exception as e:
             logger.error(f"[Escalation] Engine switch failed: {e}")
@@ -2916,6 +3953,8 @@ class BrowserAgent:
             api_key=zone,
         )
 
+        # A01a FIX: Save target_url BEFORE closing page so we can re-navigate after restart
+        saved_target = self.page.url if self.page else target_url
         # Close + restart
         try:
             if self._nodriver_bridge:
@@ -2940,6 +3979,11 @@ class BrowserAgent:
                     await self.context.add_cookies(saved_cookies)
                 except Exception:
                     pass
+            # A01a FIX: Re-navigate to target URL after proxy switch (page is at about:blank)
+            if saved_target and self.page:
+                logger.info(f"[Escalation] Re-navigating to: {saved_target}")
+                await self.page.goto(saved_target, wait_until="domcontentloaded", timeout=20000)
+                await asyncio.sleep(2)
             return True
         except Exception as e:
             logger.error(f"[Escalation] Unblocker proxy restart failed: {e}")
