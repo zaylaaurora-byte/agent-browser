@@ -1015,5 +1015,19 @@
     "status": "pending",
     "priority": "high",
     "notes": "Full UI redesign with premium glassmorphism dark theme, layered parallax scene, motion tokens, component polish, accessibility contrast guarantees, and operator cockpit layout with live evidence wall."
+  },
+  {
+    "id": "T740",
+    "title": "Docs reliability sweep: reconcile stale BUG claims across PLANv2/TEST_PLAN_20/AUDIT docs",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Update PLANv2.md, TEST_PLAN_20.md, and AUDIT_REPORT.md to reflect current fixed status (BUG-02/05/27 etc), remove contradictory outdated statements, and add single source-of-truth references to AUDIT_PLAN.md + live evidence artifacts."
+  },
+  {
+    "id": "T741",
+    "title": "Frontend + E2E coverage expansion for supervisor/settings redesign",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Add Jest tests for supervisor state transitions and settings persistence, plus Playwright smoke for Execute/Pause/Resume/Save/Load/Export; gate UI Prime rollout on passing suite."
   }
 ]

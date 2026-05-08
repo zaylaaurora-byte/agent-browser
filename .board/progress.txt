@@ -68,3 +68,6 @@ Quality score last iteration: 6/10 (18/22 passing)
 - FALLBACK APPLIED: Added T729/T730 directly to .board/prd.json.
 - UI UPGRADE: improved supervisor readability (larger typography, contrast, spacing, denser action cards) and expanded settings with Advanced Runtime controls (screenshot interval, viewport, custom user-agent).
 - LIVE WORKFLOW PACK: ran holiday/pizza/signup/social probes via /api/execute deep mode; artifacts saved to /home/zayla/Projects/agent-browser/screenshots_live_test/workflow_pack_results.json.
+- AUTONOMOUS GOAL ORCHESTRATOR: task_expand still failing with `TypeError: task_expand() got multiple values for argument 'task_id'`; fallback applied by direct PRD append.
+- NEW TASKS ADDED: T740 (docs reliability sweep) and T741 (frontend + E2E coverage expansion) from fresh weakness scan.
+- EXECUTION STARTED: Running full 9-phase roadmap (T731-T739) plus T740-T741 with verify→commit→push gates per phase.
