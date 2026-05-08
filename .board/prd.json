@@ -952,5 +952,54 @@
     "status": "pending",
     "priority": "high",
     "notes": "Run real multi-domain flows (holiday checkout evidence, pizza order flow up to payment gate, signup and social action flow), save screenshots + JSON artifacts, and publish benchmark report."
+  },
+  {
+    "id": "T731",
+    "title": "Phase 1 Frontend: dark mode, session replay, metrics dashboard, task templates, multi-task queue",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Dark mode toggle (system/light/dark), session history panel with timeline replay, agent performance metrics (steps/sec, avg thinking time, failure rate by domain), task templates with presets (holiday/pizza/job/signup/social), multi-task queue with sequential execution, real-time token usage tracking."
+  },
+  {
+    "id": "T732",
+    "title": "Phase 2 Actions: add missing action handlers (book, upload, dialog, nav, frame)",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Add book action (Stripe test card flow), upload action (file input), handle_dialog action (alert/confirm), wait_for_navigation action, switch_to_frame action, iframe_click/iframe_type/iframe_hover handlers, retry-on-unknown-action guard."
+  },
+  {
+    "id": "T733",
+    "title": "Phase 3 Site overrides: add 6 new travel booking sites",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Add Kayak, Hotels.com, Vrbo, Hostelworld, Agoda, Skyscanner overrides with extra_headers, post_nav_js, date_picker_selectors, form_selectors, proxy requirement flags."
+  },
+  {
+    "id": "T734",
+    "title": "Phase 4 Error hygiene: replace silent exception swallowing with structured logging",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Replace all bare `except Exception:` and `except:` blocks in browser_agent.py, mcp_server.py, antibot_escalation.py with structured warning logs + error categorization (retryable vs fatal). Add regression tests for each failure branch."
+  },
+  {
+    "id": "T735",
+    "title": "Phase 5 Dependency refresh: upgrade npm + pip with lockfile checkpoints",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Upgrade safe minor/patch versions (next 16.2.4\u219216.2.6, react 19.2.4\u219219.2.6, typescript 5.9.3\u21926.0.3, eslint 9.39.4\u219210.3.0, node 20.19\u219225.6), pin lockfile after each batch, snapshot git checkpoint before each batch, run pytest+build+smoke after each."
+  },
+  {
+    "id": "T736",
+    "title": "Phase 6 Testing: add frontend unit tests + E2E smoke tests",
+    "status": "pending",
+    "priority": "medium",
+    "notes": "Add Jest unit tests for frontend components (index.tsx, supervisor/page.tsx, activity-feed), add pytest integration tests for MCP execute_task singleton isolation, add Playwright E2E smoke test for full execute flow."
+  },
+  {
+    "id": "T737",
+    "title": "Phase 7 Live holiday benchmark: full checkout evidence from 8+ travel sites",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Run browser against Booking, TUI, Jet2, LoveHolidays, OnTheBeach, Kayak, Hotels.com, Vrbo \u2014 capture pre-payment totals, screenshots at search/results/detail/checkout stages \u2014 output normalized JSON (site, URL, occupancy, board, total, confidence, images)."
   }
 ]
