@@ -46,3 +46,7 @@ Quality score last iteration: 6/10 (18/22 passing)
 - WEAKNESS EVIDENCE: npm outdated shows next/react/shadcn drift; pip outdated shows openai/cryptography/urllib3/pydantic and others behind latest.
 - AUTONOMOUS BLOCKER (task generation): task_expand attempted for T713-T715 and failed again with `TypeError: task_expand() got multiple values for argument 'task_id'`.
 - FALLBACK APPLIED: Added T713/T714/T715 directly to .board/prd.json so execution can continue without stop.
+- AUTONOMOUS BLOCKER (task generation): task_expand failed again for T716-T718 with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- FALLBACK APPLIED: Added T716/T717/T718 directly to .board/prd.json and proceeding with execution plan from these tasks.
+- AUTONOMOUS BLOCKER (task generation): task_expand failed again for T719-T721 with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- FALLBACK APPLIED: Added T719/T720/T721 directly to .board/prd.json from weakness/dependency scan.

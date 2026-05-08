@@ -843,5 +843,47 @@
     "status": "pending",
     "priority": "high",
     "notes": "Automate minor-only npm/pip upgrades first, run pytest+build gates, generate rollback snapshot and compatibility report."
+  },
+  {
+    "id": "T716",
+    "title": "Deterministic BUG-05 wait-loop bailout test harness",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Build fixture-driven stream_execute tests that force repeated wait() actions and assert bailout message + terminal status."
+  },
+  {
+    "id": "T717",
+    "title": "BUG-27 restart re-navigation contract tests",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Test escalate_unblocker_proxy/escalate_firefox paths re-open target URL after restart and continue flow."
+  },
+  {
+    "id": "T718",
+    "title": "Live checkout evidence E2E suite for Sept 8 family search",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Automate 3 adults + 3 children, 7 nights from Sept 8, capture pre-payment totals + screenshots + links across multi-site adapters."
+  },
+  {
+    "id": "T719",
+    "title": "Add dead-code/exception-swallowing audit with strict lint gate for backend",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Multiple 'pass  # best-effort/non-fatal' blocks in browser_agent.py/helpers hide failures; add explicit logging/assertion policy + failure-branch tests."
+  },
+  {
+    "id": "T720",
+    "title": "Create transport parity suite for MCP execute_task vs direct WS stream_execute",
+    "status": "pending",
+    "priority": "high",
+    "notes": "MCP previously failed with 'No browser agent attached'; add integration test starting backend, running both paths, and comparing completion semantics + payload shape."
+  },
+  {
+    "id": "T721",
+    "title": "Stage minor dependency upgrades with compatibility CI matrix",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Upgrade safe minors (next/react/eslint-config-next/shadcn + openai/urllib3/cryptography/pydantic) with rollback checkpoints and smoke tests."
   }
 ]
