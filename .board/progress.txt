@@ -44,3 +44,5 @@ Quality score last iteration: 6/10 (18/22 passing)
 - GOAL ORCHESTRATOR BLOCKER (2026-05-08 task-gen): `task_expand` still fails with `TypeError: task_expand() got multiple values for argument 'task_id'`.
 - FALLBACK TASKS ADDED MANUALLY TO .board/prd.json: T710 (CAPTCHA wait-loop + restart fallback tests), T711 (dependency refresh lane with lockfile guard), T712 (20-workflow cross-domain benchmark + evidence pack).
 - WEAKNESS EVIDENCE: npm outdated shows next/react/shadcn drift; pip outdated shows openai/cryptography/urllib3/pydantic and others behind latest.
+- AUTONOMOUS BLOCKER (task generation): task_expand attempted for T713-T715 and failed again with `TypeError: task_expand() got multiple values for argument 'task_id'`.
+- FALLBACK APPLIED: Added T713/T714/T715 directly to .board/prd.json so execution can continue without stop.

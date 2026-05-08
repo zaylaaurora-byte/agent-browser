@@ -822,5 +822,26 @@
     "status": "pending",
     "priority": "high",
     "notes": "Current tests are narrow; add jobs/signup/pizza/travel/social/instagram coverage with screenshot + JSON artifacts and pass/fail rubric."
+  },
+  {
+    "id": "T713",
+    "title": "Add deterministic tests for BUG-05 CAPTCHA wait-loop bailout in stream_execute",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Create fixture-driven tests that force consecutive wait() actions and assert bailout + clear terminal status event."
+  },
+  {
+    "id": "T714",
+    "title": "Add restart re-navigation regression test for BUG-27 escalation paths",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Cover escalate_unblocker_proxy and escalate_firefox to ensure target URL is reopened after browser restart."
+  },
+  {
+    "id": "T715",
+    "title": "Create dependency update pipeline with staged safe upgrades",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Automate minor-only npm/pip upgrades first, run pytest+build gates, generate rollback snapshot and compatibility report."
   }
 ]
