@@ -4,9 +4,9 @@ import json
 import subprocess
 from pathlib import Path
 
-ROOT = Path('/home/zayla/Projects/agent-browser')
+ROOT = Path(__file__).resolve().parents[1]
 BACKEND_PIP = ROOT / 'backend' / 'venv' / 'bin' / 'pip'
-OUT = ROOT / 'screenshots_live_test_100' / 'dependency_audit.json'
+OUT = ROOT / 'screenshots_live_test_100' / 'dependency_audit.json'  # CI artifact path
 
 
 def run(cmd, cwd=None):

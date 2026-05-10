@@ -1,0 +1,57 @@
+name: hardening-gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run backend unit tests
+        working-directory: backend
+        run: |
+          python -m venv venv
+          . venv/bin/activate
+          pip install -r requirements.txt
+          pytest -q tests/test_browser_agent.py
+
+      - name: Run dependency audit script
+        run: python3 scripts/dependency_audit.py
+
+      - name: Run complex-20 validator (skip if benchmark file missing)
+        run: python3 scripts/validate_complex_20_results.py
+
+      - name: Upload hardening artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hardening-gates-artifacts
+          path: |
+            screenshots_live_test_100/dependency_audit.json
+            screenshots_complex_20/validation_complex_20.json
+          if-no-files-found: ignore
