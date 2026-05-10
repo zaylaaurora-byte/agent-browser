@@ -727,9 +727,9 @@
       "Script verifies npm lock consistency and no missing dependencies",
       "CI/local command emits pass/fail summary for dependency hygiene"
     ],
-    "passes": false,
+    "passes": true,
     "last_tested": "2026-05-08",
-    "notes": "Added from autonomous audit request."
+    "notes": "Implemented scripts/dependency_hygiene.py + npm script 'hygiene'; verified pip check, npm ci dry-run, and cleanup summary."
   },
   {
     "id": "T501",
@@ -1029,5 +1029,329 @@
     "status": "pending",
     "priority": "high",
     "notes": "Add Jest tests for supervisor state transitions and settings persistence, plus Playwright smoke for Execute/Pause/Resume/Save/Load/Export; gate UI Prime rollout on passing suite."
+  },
+  {
+    "id": "T742",
+    "title": "Apply a consistent dark glassmorphism theme across the app shell and major pages",
+    "status": "pending",
+    "priority": "high",
+    "notes": "User feedback says the current UI does not read as dark mode; deepen backgrounds, unify glass surfaces, and verify the dashboard/settings/supervisor screenshots show the new aesthetic."
+  },
+  {
+    "id": "T743",
+    "title": "Close remaining plan-feature gaps with verified implementation and screenshots",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Audit the remaining plan/docs backlog for unfinished features, implement the highest-impact ones, and verify each with tests plus screenshots before marking complete."
+  },
+  {
+    "id": "T744",
+    "title": "Integrate holiday booking flow from hotel_research.py into MCP and execution flow",
+    "status": "pending",
+    "priority": "high",
+    "notes": "IMPROVEMENTS.md F-01 and PLANv3 A02 indicate the booking gap: hotel research exists but is not wired into stream_execute or MCP. Add a verified holiday-booking task path and live site handling."
+  },
+  {
+    "id": "T745",
+    "title": "Implement missing iframe, upload, and dialog action handlers in browser_agent.py",
+    "status": "pending",
+    "priority": "high",
+    "notes": "PLANv3 A01d-A01f list missing iframe_click/iframe_type/iframe_hover, upload, and handle_dialog support. Add the handlers and cover them with regression tests."
+  },
+  {
+    "id": "T746",
+    "title": "Add job application flow integration for Indeed, LinkedIn, and Glassdoor",
+    "status": "pending",
+    "priority": "medium",
+    "notes": "IMPROVEMENTS.md F-02 shows job application integration remains incomplete. Add task intent detection, multi-page form support, and credential-handling paths for major job sites."
+  },
+  {
+    "id": "T747",
+    "title": "Add supervisor token usage and cost estimates",
+    "status": "pending",
+    "priority": "medium",
+    "notes": "Derived from AUDIT_PLAN.md L-03: the supervisor lacks token usage tracking, so operators cannot see per-task cost efficiency. Add a visible estimate panel in src/app/supervisor/page.tsx with backend metadata fallback and tests for missing usage data."
+  },
+  {
+    "id": "T748",
+    "title": "Replace silent exception swallowing in critical browser paths",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Derived from AUDIT_PLAN.md C-01: audit bare except blocks in backend/browser_agent.py, backend/mcp_server.py, and backend/antibot_escalation.py, replace them with structured logging, and add regression tests that surface representative failures."
+  },
+  {
+    "id": "T749",
+    "title": "Universal task planner and self-healing executor for any website/task",
+    "status": "pending",
+    "priority": "critical",
+    "notes": "North-star upgrade: build a provider-free universal task planner/executor layer so Agent Browser is not hardcoded to holiday/job/pizza flows. Add task intent decomposition, page-state driven replanning, tool/action affordance scoring, and generic completion criteria. Acceptance: unit tests for arbitrary tasks (search/extract/form/auth/navigation), REST/WS/MCP parity test, live smoke against at least 5 unrelated websites with evidence artifacts."
+  },
+  {
+    "id": "T750",
+    "title": "First-class fallback ladder with zero silent failures",
+    "status": "pending",
+    "priority": "critical",
+    "notes": "North-star upgrade: replace silent or one-shot failures with a first-class fallback ladder: selector alternatives, role/text/OCR coordinates, JS dispatch, navigation retry, mobile URL, fresh-agent context, alternate engine, archive/search fallback, and structured BLOCKER only after all tiers are exhausted. Acceptance: deterministic tests prove each tier is attempted in order and user-visible step output includes tier, reason, and final status."
+  },
+  {
+    "id": "T751",
+    "title": "Browser-use competitive research and universal benchmark harness",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Research browser-use/browser-use and comparable self-hosted browser agents, then implement a local benchmark suite that compares Agent Browser capabilities without paid scraper APIs. Acceptance: docs/competitive-browser-agent-benchmark.md created, benchmark JSON schema added, 20+ task suite covers navigation/forms/extraction/auth-like flows/iframes/files/dialogs, and baseline pass-rate saved under screenshots_live_test/universal_benchmark/."
+  },
+  {
+    "id": "T752",
+    "title": "Scalable fresh-agent session isolation and concurrency architecture",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Eliminate singleton contamination for universal use. Add per-request fresh agent isolation, session pools, bounded concurrency, lifecycle cleanup, and state handoff only when explicitly requested. Acceptance: tests prove two concurrent REST/MCP tasks do not share cookies/challenges/history, and live benchmark shows no cross-site contamination after a blocked site."
+  },
+  {
+    "id": "T753",
+    "title": "Universal operator UI: fallback timeline, evidence wall, task queue, and capability scorecard",
+    "status": "pending",
+    "priority": "high",
+    "notes": "Greatly improve the UI for universal tasks: show fallback tiers attempted, screenshots/diffs, current page state, task queue, run comparison, failure taxonomy, and capability scorecard. Acceptance: /supervisor live screenshot shows fallback timeline and evidence wall; npm build passes; frontend tests cover error/fallback rendering."
+  },
+  {
+    "id": "T754",
+    "category": "reliability",
+    "priority": 1,
+    "title": "Replace remaining silent exception swallowing with structured fallback/error events",
+    "description": "Weakness scan found broad except/pass and silent catch paths in backend/browser_agent.py, backend/antibot_escalation.py, backend/mcp_server.py, session_manager.py, free_proxy_pool.py, and related critical execution paths. Replace silent swallowing with structured logs, fallback_trace/error_event payloads, and regression tests.",
+    "acceptance_criteria": [
+      "Critical browser execution paths no longer use bare except/pass without logging or fallback_trace/error_event payloads",
+      "Shared helper exists for structured non-fatal error capture with tier/status/detail fields",
+      "Regression tests prove representative browser_agent, antibot, MCP, and session-manager failures are surfaced visibly",
+      "Existing tests and npm build pass"
+    ],
+    "passes": false,
+    "notes": "Created via direct .board fallback because task_expand failed three times with TypeError: got multiple values for argument task_id."
+  },
+  {
+    "id": "T755",
+    "category": "ui",
+    "priority": 1,
+    "title": "Persist and display fallback traces in history/supervisor evidence views",
+    "description": "Frontend activity feed can display fallback_trace, but run history and supervisor evidence views do not yet persist/display it consistently. src/app/history/page.tsx also has a silent catch. Add persisted fallback trace evidence and visible UI error states.",
+    "acceptance_criteria": [
+      "Run history storage/API preserves fallback_trace and visual_diff fields for each step",
+      "/history and /supervisor render fallback timeline/evidence cards for failed and recovered actions",
+      "src/app/history/page.tsx replaces silent catch with visible error state and console-safe diagnostic",
+      "Frontend tests or build verify typed step shape and UI renders without TypeScript errors"
+    ],
+    "passes": false,
+    "notes": "Created via direct .board fallback because task_expand failed three times with TypeError: got multiple values for argument task_id."
+  },
+  {
+    "id": "T800",
+    "category": "verification",
+    "priority": 1,
+    "title": "100-site live benchmark runner with screenshots and per-site task evidence",
+    "description": "Expand current 20-site benchmark to at least 100 websites across categories and run live against /api/execute with real per-site tasks. Save results JSON, pass-rate summary, and screenshots.",
+    "acceptance_criteria": [
+      "At least 100 distinct websites tested",
+      "Each site executed with a concrete task prompt",
+      "results_100.json includes status/elapsed/answer/screenshot for each site",
+      "Summary file includes category-level pass rates"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T801",
+    "category": "reliability",
+    "priority": 2,
+    "title": "Automated TODO/FIXME plus dependency drift gate",
+    "description": "Add automated report for TODO/FIXME debt and dependency drift across backend/frontend, with artifact output and fail thresholds for CI.",
+    "acceptance_criteria": [
+      "Script scans TODO/FIXME across codebase and outputs machine-readable JSON",
+      "Script reports outdated Python and npm dependencies",
+      "CI gate returns non-zero when thresholds are exceeded",
+      "Report artifact path documented in progress log"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T802",
+    "category": "verification",
+    "priority": 2,
+    "title": "Contract tests for 100-site runner outputs and artifact integrity",
+    "description": "Add tests that validate 100-site result JSON schema and artifact consistency, including screenshot path existence and summary math checks.",
+    "acceptance_criteria": [
+      "Test validates required fields for each result entry",
+      "Test validates summary totals and pass rate math",
+      "Test validates screenshot paths referenced in result entries actually exist",
+      "Pytest target added and passing"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T803",
+    "category": "architecture",
+    "priority": 2,
+    "title": "Fresh-agent isolation toggle in benchmark runner",
+    "description": "Implement a benchmark runner toggle for fresh browser context per site and produce comparison report against shared context contamination behavior.",
+    "acceptance_criteria": [
+      "Runner supports toggle for fresh context per site",
+      "A/B report generated for shared vs fresh context",
+      "Report includes pass rate and failure taxonomy deltas",
+      "Results saved as JSON artifact"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T804",
+    "category": "verification",
+    "priority": 2,
+    "title": "Add regression tests for fallback engine tier chain and BLOCKER emission",
+    "description": "Create deterministic tests for retry→mobile/url variants→web_search→archive→partial data→BLOCKER fallback tiers and verify evidence fields are emitted in step payloads.",
+    "acceptance_criteria": [
+      "Tier-chain tests cover all fallback stages",
+      "Tests verify BLOCKER appears only after all tiers exhausted",
+      "Tests validate fallback_trace contains tier/status/detail",
+      "Pytest suite passes in CI"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T805",
+    "category": "reliability",
+    "priority": 2,
+    "title": "Add dependency freshness report + CI alerting for backend/frontend",
+    "description": "Automate pip/npm outdated collection with severity thresholds and CI alerts for stale critical packages.",
+    "acceptance_criteria": [
+      "Script outputs machine-readable stale dependency report",
+      "Critical staleness threshold causes non-zero exit in CI",
+      "Backend and frontend dependency sets covered",
+      "Artifact path documented in progress logs"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T806",
+    "category": "reliability",
+    "priority": 2,
+    "title": "Dependency audit runner using project venvs (backend/frontend)",
+    "description": "Add a dependency audit script that uses backend venv pip and frontend npm to produce a stable JSON artifact even when global pip is unavailable.",
+    "acceptance_criteria": [
+      "Script runs backend venv pip list --outdated successfully",
+      "Script runs npm outdated for frontend",
+      "JSON artifact written with package name/current/latest",
+      "CI command exits non-zero on critical staleness threshold"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T807",
+    "category": "verification",
+    "priority": 2,
+    "title": "Benchmark resumability and partial-result integrity checks",
+    "description": "Add tests for interrupted 100-site benchmark runs to ensure inprogress persistence, resume correctness, and no duplicated/missing indices.",
+    "acceptance_criteria": [
+      "Tests validate no duplicate idx entries after resume",
+      "Tests validate final total equals planned site count",
+      "Tests validate summary math from inprogress/final files",
+      "Pytest suite passes in CI"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T808",
+    "category": "verification",
+    "priority": 1,
+    "title": "Raise 100-site live benchmark pass-rate to >=95% with hardened fetch strategy",
+    "description": "Implement retries, alternate URL variants (www/home), realistic browser headers, and redirect-aware success classification to exceed 95% success on the 100-site live benchmark.",
+    "acceptance_criteria": [
+      "Live run across 100 sites reports pass_rate >= 95.0",
+      "Per-site attempts and final classification captured in JSON",
+      "Chart artifact regenerated from hardened run",
+      "Run is reproducible via one command"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T809",
+    "category": "reliability",
+    "priority": 1,
+    "title": "Add threshold gate test for 100-site benchmark pass-rate",
+    "description": "Create a validation script/test that fails when pass_rate drops below 95% and checks required output artifacts exist.",
+    "acceptance_criteria": [
+      "Gate exits non-zero when pass_rate <95%",
+      "Gate verifies JSON summary fields and chart file presence",
+      "Gate is runnable in CI/local",
+      "Documentation added to progress log"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T810",
+    "category": "verification",
+    "priority": 1,
+    "title": "Complex 20-task benchmark quality gate with intent-level assertions",
+    "description": "Add validator assertions for complex tasks so completion requires intent evidence (search result opened, signup step reached, apply/cart interaction discovered, or explicit challenge blocker).",
+    "acceptance_criteria": [
+      "Quality gate checks at least 20 complex tasks",
+      "Per-task intent assertion pass/fail is recorded",
+      "Gate exits non-zero when intent assertion pass rate is below threshold",
+      "Artifacts are machine-readable JSON"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T811",
+    "category": "reliability",
+    "priority": 1,
+    "title": "Benchmark anti-bot fallback taxonomy and auto-rerun policy",
+    "description": "Classify benchmark failures (timeout/captcha/challenge/http/selector) and implement automatic one-pass rerun with alternate strategy per class.",
+    "acceptance_criteria": [
+      "Failure taxonomy fields persisted per task",
+      "Auto-rerun policy executes alternate strategy per failure class",
+      "Summary includes first-pass vs rerun delta",
+      "Regression test validates taxonomy schema"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T812",
+    "category": "reliability",
+    "priority": 1,
+    "title": "CI gate for dependency drift artifact with critical threshold",
+    "description": "Use scripts/dependency_audit.py in CI and fail builds when outdated critical dependencies exceed configured threshold.",
+    "acceptance_criteria": [
+      "dependency_audit.json artifact generated in CI",
+      "Gate exits non-zero when critical drift threshold exceeded",
+      "Backend and frontend dependency sets included",
+      "Threshold and overrides documented"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
+  },
+  {
+    "id": "T813",
+    "category": "verification",
+    "priority": 1,
+    "title": "Integrate complex benchmark validator into regression pipeline",
+    "description": "Run scripts/validate_complex_20_results.py in CI to enforce intent-level and screenshot-integrity thresholds for 20-task complex benchmark artifacts.",
+    "acceptance_criteria": [
+      "Validator runs as CI step",
+      "Build fails when intent/screenshot rates fall below threshold",
+      "validation_complex_20.json published as artifact",
+      "Regression docs updated with command usage"
+    ],
+    "passes": false,
+    "notes": "Added via direct fallback because task_expand TypeError persists."
   }
 ]

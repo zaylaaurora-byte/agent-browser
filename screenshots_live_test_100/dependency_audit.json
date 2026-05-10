@@ -1,0 +1,196 @@
+{
+  "python_outdated_count": 19,
+  "npm_outdated_count": 10,
+  "python": {
+    "packages": [
+      {
+        "name": "apify_fingerprint_datapoints",
+        "version": "0.12.0",
+        "latest_version": "0.13.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "cachetools",
+        "version": "7.1.0",
+        "latest_version": "7.1.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "cryptography",
+        "version": "47.0.0",
+        "latest_version": "48.0.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "language-tags",
+        "version": "1.2.0",
+        "latest_version": "1.3.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "markdown-it-py",
+        "version": "4.0.0",
+        "latest_version": "4.2.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "mcp",
+        "version": "1.27.0",
+        "latest_version": "1.27.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "onnxruntime",
+        "version": "1.25.1",
+        "latest_version": "1.26.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "openai",
+        "version": "2.33.0",
+        "latest_version": "2.36.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "orjson",
+        "version": "3.11.8",
+        "latest_version": "3.11.9",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "pip",
+        "version": "24.0",
+        "latest_version": "26.1.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "propcache",
+        "version": "0.4.1",
+        "latest_version": "0.5.2",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "pydantic",
+        "version": "2.13.3",
+        "latest_version": "2.13.4",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "pydantic_core",
+        "version": "2.46.3",
+        "latest_version": "2.46.4",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "pydantic-settings",
+        "version": "2.14.0",
+        "latest_version": "2.14.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "setuptools",
+        "version": "79.0.1",
+        "latest_version": "82.0.1",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "sse-starlette",
+        "version": "3.4.1",
+        "latest_version": "3.4.2",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "ua-parser-builtins",
+        "version": "202603",
+        "latest_version": "202605",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "urllib3",
+        "version": "2.6.3",
+        "latest_version": "2.7.0",
+        "latest_filetype": "wheel"
+      },
+      {
+        "name": "wcwidth",
+        "version": "0.6.0",
+        "latest_version": "0.7.0",
+        "latest_filetype": "wheel"
+      }
+    ]
+  },
+  "npm": {
+    "packages": {
+      "@tailwindcss/postcss": {
+        "current": "4.2.4",
+        "wanted": "4.3.0",
+        "latest": "4.3.0",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/@tailwindcss/postcss"
+      },
+      "@types/node": {
+        "current": "20.19.39",
+        "wanted": "20.19.40",
+        "latest": "25.6.2",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/@types/node"
+      },
+      "eslint": {
+        "current": "9.39.4",
+        "wanted": "9.39.4",
+        "latest": "10.3.0",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/eslint"
+      },
+      "eslint-config-next": {
+        "current": "16.2.4",
+        "wanted": "16.2.4",
+        "latest": "16.2.6",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/eslint-config-next"
+      },
+      "next": {
+        "current": "16.2.4",
+        "wanted": "16.2.4",
+        "latest": "16.2.6",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/next"
+      },
+      "react": {
+        "current": "19.2.4",
+        "wanted": "19.2.4",
+        "latest": "19.2.6",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/react"
+      },
+      "react-dom": {
+        "current": "19.2.4",
+        "wanted": "19.2.4",
+        "latest": "19.2.6",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/react-dom"
+      },
+      "shadcn": {
+        "current": "4.6.0",
+        "wanted": "4.7.0",
+        "latest": "4.7.0",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/shadcn"
+      },
+      "tailwindcss": {
+        "current": "4.2.4",
+        "wanted": "4.3.0",
+        "latest": "4.3.0",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/tailwindcss"
+      },
+      "typescript": {
+        "current": "5.9.3",
+        "wanted": "5.9.3",
+        "latest": "6.0.3",
+        "dependent": "agent-browser",
+        "location": "/home/zayla/Projects/agent-browser/node_modules/typescript"
+      }
+    }
+  }
+}

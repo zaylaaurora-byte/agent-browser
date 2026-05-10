@@ -104,7 +104,8 @@ export function ActivityFeed({
                 const isError  = step.status === "retrying" || step.status === "failed";
                 const isDone   = step.action === "done";
                 const expanded = expandedSteps.has(step.step);
-                const hasExtra = !!(step.ai_reasoning || step.thinking);
+                const hasFallback = (step.fallback_trace?.length ?? 0) > 0;
+                const hasExtra = !!(step.ai_reasoning || step.thinking || hasFallback);
 
                 return (
                   <motion.div
@@ -126,20 +127,23 @@ export function ActivityFeed({
                           )}
                         </div>
                         {step.argument && (
-                          <p className="text-[10px] text-zinc-600 font-mono truncate">{step.argument}</p>
+                          <p className="text-[10px] text-zinc-300 font-mono truncate">{step.argument}</p>
                         )}
                         {step.observation && (
                           <div className="mt-1 p-2 rounded-lg bg-cyan-950/15 border border-cyan-800/12">
-                            <p className="text-[9px] text-zinc-600 font-mono line-clamp-2">{step.observation}</p>
+                            <p className="text-[9px] text-zinc-300 font-mono line-clamp-2">{step.observation}</p>
                           </div>
                         )}
                         {step.error && (
                           <p className="text-[9px] text-red-400 font-mono mt-0.5">{step.error}</p>
                         )}
+                        {hasFallback && (
+                          <FallbackTrace trace={step.fallback_trace!} expanded={expanded} />
+                        )}
                         {step.url && (
                           <div className="flex items-center gap-1 mt-0.5">
                             <Globe className="w-2.5 h-2.5 text-zinc-800 flex-shrink-0" />
-                            <span className="text-[9px] text-zinc-700 font-mono truncate">{step.url}</span>
+                            <span className="text-[9px] text-zinc-500 font-mono truncate">{step.url}</span>
                           </div>
                         )}
                         {hasExtra && (
@@ -187,7 +191,8 @@ export function ActivityFeed({
               const isError  = step.status === "retrying" || step.status === "failed";
               const isDone   = step.action === "done";
               const expanded = expandedSteps.has(step.step);
-              const hasExtra = !!(step.ai_reasoning || step.thinking);
+              const hasFallback = (step.fallback_trace?.length ?? 0) > 0;
+              const hasExtra = !!(step.ai_reasoning || step.thinking || hasFallback);
 
               return (
                 <motion.div
@@ -209,20 +214,23 @@ export function ActivityFeed({
                         )}
                       </div>
                       {step.argument && (
-                        <p className="text-[10px] text-zinc-600 font-mono truncate">{step.argument}</p>
+                        <p className="text-[10px] text-zinc-300 font-mono truncate">{step.argument}</p>
                       )}
                       {step.observation && (
                         <div className="mt-1 p-2 rounded-lg bg-cyan-950/15 border border-cyan-800/12">
-                          <p className="text-[9px] text-zinc-600 font-mono line-clamp-2">{step.observation}</p>
+                          <p className="text-[9px] text-zinc-300 font-mono line-clamp-2">{step.observation}</p>
                         </div>
                       )}
                       {step.error && (
                         <p className="text-[9px] text-red-400 font-mono mt-0.5">{step.error}</p>
                       )}
+                      {hasFallback && (
+                        <FallbackTrace trace={step.fallback_trace!} expanded={expanded} />
+                      )}
                       {step.url && (
                         <div className="flex items-center gap-1 mt-0.5">
                           <Globe className="w-2.5 h-2.5 text-zinc-800 flex-shrink-0" />
-                          <span className="text-[9px] text-zinc-700 font-mono truncate">{step.url}</span>
+                          <span className="text-[9px] text-zinc-500 font-mono truncate">{step.url}</span>
                         </div>
                       )}
                       {hasExtra && (
@@ -263,6 +271,48 @@ export function ActivityFeed({
         )}
       </div>
     </motion.div>
+  );
+}
+
+function FallbackTrace({
+  trace,
+  expanded,
+}: {
+  trace: NonNullable<Step["fallback_trace"]>;
+  expanded: boolean;
+}) {
+  const visible = expanded ? trace : trace.slice(-2);
+  return (
+    <div className="mt-1.5 rounded-lg border border-amber-500/15 bg-amber-950/10 p-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-amber-300/80">Fallback ladder</span>
+        <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-mono text-amber-200/70">
+          {trace.length} tier{trace.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {visible.map((entry, idx) => {
+          const status = entry.status || "unknown";
+          const tone = status === "success"
+            ? "bg-emerald-400 text-emerald-950"
+            : status === "failed" || status === "error" || status === "blocked"
+              ? "bg-red-400 text-red-950"
+              : "bg-zinc-500 text-zinc-950";
+          return (
+            <div key={`${entry.tier}-${idx}`} className="flex items-start gap-1.5 text-[9px] font-mono">
+              <span className={`mt-0.5 rounded px-1 py-px text-[8px] font-bold uppercase ${tone}`}>{status}</span>
+              <div className="min-w-0 flex-1">
+                <span className="text-amber-100/85">{entry.tier}</span>
+                {entry.detail && <span className="text-zinc-500"> — {entry.detail}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {!expanded && trace.length > visible.length && (
+        <p className="mt-1 text-[8px] text-amber-200/45">Expand to see all fallback tiers.</p>
+      )}
+    </div>
   );
 }
 
